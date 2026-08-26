@@ -1,0 +1,53 @@
+<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
+  <PropertyGroup>
+    <AssemblyName>RetailCanvas</AssemblyName>
+    <GenerateAssemblyInfo>False</GenerateAssemblyInfo>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>True</UseWPF>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+  <PropertyGroup>
+    <LangVersion>12.0</LangVersion>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <PropertyGroup>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <RootNamespace />
+  </PropertyGroup>
+  <ItemGroup>
+    <None Remove="mainwindow.baml" />
+    <None Remove="app.baml" />
+    <None Remove="RetailCanvas.RetailCanvas.Resources.Textures.brushed-metal-dark.png" />
+    <None Remove="RetailCanvas.RetailCanvas.Resources.Textures.gold-sparkle.png" />
+    <None Remove="RetailCanvas.RetailCanvas.Resources.Textures.washi-paper.png" />
+    <None Remove="RetailCanvas.RetailCanvas.Resources.Textures.water-surface.png" />
+    <None Remove="RetailCanvas.RetailCanvas.Resources.mise-icon.png" />
+    <Resource Include="mainwindow.baml" LogicalName="mainwindow.baml" />
+    <Resource Include="app.baml" LogicalName="app.baml" />
+    <EmbeddedResource Include="RetailCanvas.RetailCanvas.Resources.Textures.brushed-metal-dark.png" LogicalName="RetailCanvas.RetailCanvas.Resources.Textures.brushed-metal-dark.png" />
+    <EmbeddedResource Include="RetailCanvas.RetailCanvas.Resources.Textures.gold-sparkle.png" LogicalName="RetailCanvas.RetailCanvas.Resources.Textures.gold-sparkle.png" />
+    <EmbeddedResource Include="RetailCanvas.RetailCanvas.Resources.Textures.washi-paper.png" LogicalName="RetailCanvas.RetailCanvas.Resources.Textures.washi-paper.png" />
+    <EmbeddedResource Include="RetailCanvas.RetailCanvas.Resources.Textures.water-surface.png" LogicalName="RetailCanvas.RetailCanvas.Resources.Textures.water-surface.png" />
+    <EmbeddedResource Include="RetailCanvas.RetailCanvas.Resources.mise-icon.png" LogicalName="RetailCanvas.RetailCanvas.Resources.mise-icon.png" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="Microsoft.Data.Sqlite">
+      <HintPath>..\extracted\Microsoft.Data.Sqlite.dll</HintPath>
+    </Reference>
+    <Reference Include="PdfSharp-wpf">
+      <HintPath>..\extracted\PdfSharp-wpf.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Windows.SDK.NET">
+      <HintPath>..\extracted\Microsoft.Windows.SDK.NET.dll</HintPath>
+    </Reference>
+    <Reference Include="WinRT.Runtime">
+      <HintPath>..\extracted\WinRT.Runtime.dll</HintPath>
+    </Reference>
+    <Reference Include="QRCoder">
+      <HintPath>..\extracted\QRCoder.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>

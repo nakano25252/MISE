@@ -1,0 +1,5 @@
+outputs/
+work/dotnet/
+work/decompiled/bin/
+work/decompiled/obj/
+work/decompiled/*.pdb
