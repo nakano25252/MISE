@@ -34,6 +34,8 @@ public sealed class DesignerItem : ContentControl
 	private bool _resizing;
 
 	private Point _resizeStartPointer;
+	private double _resizeAccumX;
+	private double _resizeAccumY;
 
 	private Rect _resizeStartRect;
 
@@ -321,9 +323,13 @@ public sealed class DesignerItem : ContentControl
 	{
 		if (_resizing && !Model.IsLocked && base.Parent is Canvas relativeTo)
 		{
-			Point position = Mouse.GetPosition(relativeTo);
-			double dx = position.X - _resizeStartPointer.X;
-			double dy = position.Y - _resizeStartPointer.Y;
+			// DragDelta is already expressed in the resized element's coordinate
+			// space. Using absolute canvas mouse coordinates double-applied zoom and
+			// caused tiny cursor movements to produce huge jumps.
+			_resizeAccumX += e.HorizontalChange;
+			_resizeAccumY += e.VerticalChange;
+			double dx = _resizeAccumX;
+			double dy = _resizeAccumY;
 			Rect rect = CalculateResizeRect(_resizeStartRect, _resizeDirection, dx, dy, Model.PreserveAspectRatio || Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));
 			// Keep resized elements inside the design canvas. Without this guard a
 			// proportional resize can grow past the page edge, leaving the selection
@@ -391,6 +397,8 @@ public sealed class DesignerItem : ContentControl
 			_resizeStartRect = new Rect(num, num2, Math.Max(12.0, base.ActualWidth), Math.Max(12.0, base.ActualHeight));
 			_resizeStartFontSize = Model.FontSizePt;
 			_resizeStartPointer = Mouse.GetPosition(relativeTo);
+			_resizeAccumX = 0.0;
+			_resizeAccumY = 0.0;
 			_resizing = true;
 			this.ChangeStarted?.Invoke(this, EventArgs.Empty);
 		}
