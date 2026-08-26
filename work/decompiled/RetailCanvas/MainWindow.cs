@@ -995,7 +995,7 @@ public class MainWindow : Window, IComponentConnector
 			ToolTip = tooltip,
 			Height = 46.0,
 			Margin = new Thickness(1.0),
-			Padding = new Thickness(2.0),
+			Padding = new Thickness(0.0),
 			Background = Brushes.Transparent,
 			Foreground = new SolidColorBrush(Color.FromRgb(220, 226, 236)),
 			BorderThickness = new Thickness(0.0),

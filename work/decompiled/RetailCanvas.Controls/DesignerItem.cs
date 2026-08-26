@@ -342,6 +342,15 @@ public sealed class DesignerItem : ContentControl
 				}
 				rect = new Rect(rect.Left, rect.Top, Math.Max(12.0, width), Math.Max(12.0, height));
 			}
+			if (Model.Kind == ElementKind.Text && _resizeStartRect.Width > 0.0 && _resizeStartRect.Height > 0.0)
+			{
+				double scale = Math.Min(rect.Width / _resizeStartRect.Width, rect.Height / _resizeStartRect.Height);
+				if (double.IsFinite(scale) && scale > 0.0)
+				{
+					Model.FontSizePt = Math.Clamp(_resizeStartFontSize * scale, 1.0, 300.0);
+					if (_root.Children.Count > 0) _root.Children[0].InvalidateVisual();
+				}
+			}
 			Canvas.SetLeft(this, rect.Left);
 			Canvas.SetTop(this, rect.Top);
 			base.Width = rect.Width;

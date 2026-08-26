@@ -56,8 +56,8 @@ public sealed class OutlinedTextVisual : FrameworkElement
 		Typeface typeface = new Typeface(_fontFamily, style, weight, FontStretches.Normal);
 		double num2 = Math.Max(1.0, _model.FontSizePt * 96.0 / 72.0);
 		double pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
-		double maxTextWidth = Math.Max(1.0, base.ActualWidth - 4.0);
-		double num3 = Math.Max(1.0, base.ActualHeight - 4.0);
+		double maxTextWidth = Math.Max(1.0, base.ActualWidth);
+		double num3 = Math.Max(1.0, base.ActualHeight);
 		TextAlignment result;
 		TextAlignment textAlignment = (Enum.TryParse<TextAlignment>(_model.TextAlignment, out result) ? result : TextAlignment.Center);
 		VerticalAlignment result2;
@@ -86,7 +86,7 @@ public sealed class OutlinedTextVisual : FrameworkElement
 				formattedText.SetTextDecorations(TextDecorations.Underline);
 			}
 			double y = ResolveVerticalOrigin(vertical, formattedText.Height, num3);
-			geometry = formattedText.BuildGeometry(new Point(2.0, y));
+			geometry = formattedText.BuildGeometry(new Point(0.0, y));
 		}
 		else
 		{
@@ -186,9 +186,9 @@ public sealed class OutlinedTextVisual : FrameworkElement
 			SpacedLine spacedLine = list[i];
 			double num5 = alignment switch
 			{
-				TextAlignment.Right => 2.0 + Math.Max(0.0, maxTextWidth - spacedLine.Width), 
-				TextAlignment.Center => 2.0 + Math.Max(0.0, (maxTextWidth - spacedLine.Width) / 2.0), 
-				_ => 2.0, 
+				TextAlignment.Right => Math.Max(0.0, maxTextWidth - spacedLine.Width), 
+				TextAlignment.Center => Math.Max(0.0, (maxTextWidth - spacedLine.Width) / 2.0), 
+				_ => 0.0, 
 			};
 			double y = num4 + (double)i * num2;
 			foreach (SpacedGlyph glyph in spacedLine.Glyphs)
