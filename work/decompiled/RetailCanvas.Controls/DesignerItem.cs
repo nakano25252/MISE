@@ -356,6 +356,7 @@ public sealed class DesignerItem : ContentControl
 						{
 							child.InvalidateMeasure();
 							child.InvalidateVisual();
+							child.UpdateLayout();
 						}
 					}
 				}
