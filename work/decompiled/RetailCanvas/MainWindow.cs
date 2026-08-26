@@ -3101,7 +3101,8 @@ public class MainWindow : Window, IComponentConnector
 			value2.Width = (double.IsNaN(value.Width) ? value.ActualWidth : value.Width);
 			value2.Height = (double.IsNaN(value.Height) ? value.ActualHeight : value.Height);
 			value2.Opacity = value.Opacity;
-			value2.Visibility = value.Visibility;
+			bool outside = num < 0.0 || num2 < 0.0 || num + value2.Width > OverflowCanvas.Width || num2 + value2.Height > OverflowCanvas.Height;
+			value2.Visibility = (value.Visibility == Visibility.Visible && outside) ? Visibility.Visible : Visibility.Collapsed;
 			value2.RenderTransformOrigin = value.RenderTransformOrigin;
 			value2.RenderTransform = CreateElementTransform(value.Model);
 			Panel.SetZIndex(value2, Panel.GetZIndex(value));
