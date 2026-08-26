@@ -5206,7 +5206,29 @@ public class MainWindow : Window, IComponentConnector
 		SelectOnly(canvasElementModel.Id);
 		MarkDirty();
 		RebuildCanvas();
+		if (canvasElementModel.Kind == ElementKind.Text)
+		{
+			base.Dispatcher.BeginInvoke(new Action(() => FitTextFrameToGlyphBounds(canvasElementModel)), DispatcherPriority.Loaded);
+		}
 		RefreshLayers();
+		UpdatePropertyPanel();
+	}
+
+	private void FitTextFrameToGlyphBounds(CanvasElementModel model)
+	{
+		if (!_visuals.TryGetValue(model.Id, out DesignerItem item) || item.Content is not Grid grid || grid.Children.Count == 0)
+			return;
+		if (grid.Children[0] is not Border border || border.Child is not FrameworkElement textVisual)
+			return;
+		textVisual.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+		Size desired = textVisual.DesiredSize;
+		if (desired.Width <= 0.0 || desired.Height <= 0.0)
+			return;
+		const double pxPerMm = 3.7795275590551185;
+		model.WidthMm = Math.Max(1.0, desired.Width / pxPerMm);
+		model.HeightMm = Math.Max(1.0, desired.Height / pxPerMm);
+		item.Width = desired.Width;
+		item.Height = desired.Height;
 		UpdatePropertyPanel();
 	}
 
