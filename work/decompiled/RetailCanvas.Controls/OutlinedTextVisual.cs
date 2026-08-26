@@ -42,7 +42,9 @@ public sealed class OutlinedTextVisual : FrameworkElement
 	protected override void OnRender(DrawingContext dc)
 	{
 		base.OnRender(dc);
-		if (string.IsNullOrEmpty(_model.Text) || base.ActualWidth < 2.0 || base.ActualHeight < 2.0)
+		// Keep rendering at very small font sizes; a 2px guard caused 1–2pt
+		// text to disappear even though the element itself was valid.
+		if (string.IsNullOrEmpty(_model.Text) || base.ActualWidth < 0.25 || base.ActualHeight < 0.25)
 		{
 			return;
 		}
