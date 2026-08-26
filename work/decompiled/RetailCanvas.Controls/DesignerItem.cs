@@ -356,6 +356,8 @@ public sealed class DesignerItem : ContentControl
 			base.Width = rect.Width;
 			base.Height = rect.Height;
 			this.VisualBoundsChanged?.Invoke(this, EventArgs.Empty);
+			_selectionBorder.InvalidateVisual();
+			foreach (Thumb handle in _handles) handle.InvalidateVisual();
 			this.ResizePreview?.Invoke(this, EventArgs.Empty);
 			e.Handled = true;
 		}
