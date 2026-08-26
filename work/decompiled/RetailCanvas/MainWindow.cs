@@ -5216,19 +5216,28 @@ public class MainWindow : Window, IComponentConnector
 
 	private void FitTextFrameToGlyphBounds(CanvasElementModel model)
 	{
-		if (!_visuals.TryGetValue(model.Id, out DesignerItem item) || item.Content is not Grid grid || grid.Children.Count == 0)
+		if (!_visuals.TryGetValue(model.Id, out DesignerItem item) || string.IsNullOrEmpty(model.Text))
 			return;
-		if (grid.Children[0] is not Border border || border.Child is not FrameworkElement textVisual)
-			return;
-		textVisual.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-		Size desired = textVisual.DesiredSize;
-		if (desired.Width <= 0.0 || desired.Height <= 0.0)
-			return;
+		FontWeight weight = FontWeight.FromOpenTypeWeight(Math.Clamp(model.Bold ? Math.Max(700, model.FontWeightValue) : model.FontWeightValue, 100, 900));
+		Typeface typeface = new Typeface(ResolveFontFamily(model.FontFamily), model.Italic ? FontStyles.Italic : FontStyles.Normal, weight, FontStretches.Normal);
+		double dip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+		double size = Math.Max(1.0, model.FontSizePt * 96.0 / 72.0);
+		string[] lines = model.Text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n');
+		double width = 0.0;
+		double lineHeight = 0.0;
+		foreach (string line in lines)
+		{
+			FormattedText measured = new FormattedText(line, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight, typeface, size, Brushes.Black, dip);
+			width = Math.Max(width, measured.WidthIncludingTrailingWhitespace);
+			lineHeight = Math.Max(lineHeight, measured.Height);
+		}
+		if (width <= 0.0 || lineHeight <= 0.0) return;
+		double height = lineHeight * Math.Max(1, lines.Length);
 		const double pxPerMm = 3.7795275590551185;
-		model.WidthMm = Math.Max(1.0, desired.Width / pxPerMm);
-		model.HeightMm = Math.Max(1.0, desired.Height / pxPerMm);
-		item.Width = desired.Width;
-		item.Height = desired.Height;
+		model.WidthMm = Math.Max(1.0, (width + 2.0) / pxPerMm);
+		model.HeightMm = Math.Max(1.0, (height + 2.0) / pxPerMm);
+		item.Width = width + 2.0;
+		item.Height = height + 2.0;
 		UpdatePropertyPanel();
 	}
 
