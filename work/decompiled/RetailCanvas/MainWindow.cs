@@ -6568,6 +6568,10 @@ public class MainWindow : Window, IComponentConnector
 		RebuildCanvas();
 		UpdatePropertyPanel();
 		UpdateValidationCount();
+		if (string.Equals(frameworkElement.Tag?.ToString(), "FontSize", StringComparison.Ordinal))
+		{
+			base.Dispatcher.BeginInvoke(new Action(() => FitTextFrameToGlyphBounds(activeElement)), DispatcherPriority.Loaded);
+		}
 		if (string.Equals(frameworkElement.Tag?.ToString(), "Text", StringComparison.Ordinal))
 		{
 			_textContentUndoCaptured = false;
