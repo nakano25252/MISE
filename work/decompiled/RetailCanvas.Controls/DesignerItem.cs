@@ -371,10 +371,14 @@ public sealed class DesignerItem : ContentControl
 			Canvas.SetTop(this, rect.Top);
 			base.Width = rect.Width;
 			base.Height = rect.Height;
-			this.VisualBoundsChanged?.Invoke(this, EventArgs.Empty);
 			_selectionBorder.InvalidateVisual();
 			foreach (Thumb handle in _handles) handle.InvalidateVisual();
+			// Notify the host only after Canvas.Left/Top and size are committed;
+			// otherwise the overflow mirror keeps the previous position and draws
+			// a stale duplicate text object.
+			this.VisualBoundsChanged?.Invoke(this, EventArgs.Empty);
 			this.ResizePreview?.Invoke(this, EventArgs.Empty);
+			this.ModelChanged?.Invoke(this, EventArgs.Empty);
 			e.Handled = true;
 		}
 	}
