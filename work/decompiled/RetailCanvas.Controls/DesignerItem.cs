@@ -460,14 +460,15 @@ public sealed class DesignerItem : ContentControl
 			bool flag2 = direction.Contains('N') || direction.Contains('S');
 			if (flag && flag2)
 			{
-				if (Math.Abs(dx) / start.Width >= Math.Abs(dy) / start.Height)
-				{
-					val2 = val / num;
-				}
-				else
-				{
-					val = val2 * num;
-				}
+				// Corner resize: derive one scale from the signed movement and
+				// keep the opposite corner fixed. Independent clamping of width and
+				// height caused jumps and anchor drift at NW/NE/SW/SE handles.
+				double sx = direction.Contains('W') ? (start.Width - dx) / start.Width : (start.Width + dx) / start.Width;
+				double sy = direction.Contains('N') ? (start.Height - dy) / start.Height : (start.Height + dy) / start.Height;
+				double scale = (Math.Abs(sx - 1.0) >= Math.Abs(sy - 1.0)) ? sx : sy;
+				scale = Math.Max(12.0 / Math.Min(start.Width, start.Height), scale);
+				val = start.Width * scale;
+				val2 = start.Height * scale;
 			}
 			else if (flag)
 			{
