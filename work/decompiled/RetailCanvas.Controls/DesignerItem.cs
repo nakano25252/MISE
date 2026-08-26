@@ -362,7 +362,6 @@ public sealed class DesignerItem : ContentControl
 						{
 							child.InvalidateMeasure();
 							child.InvalidateVisual();
-							child.UpdateLayout();
 						}
 					}
 				}
@@ -378,7 +377,6 @@ public sealed class DesignerItem : ContentControl
 			// a stale duplicate text object.
 			this.VisualBoundsChanged?.Invoke(this, EventArgs.Empty);
 			this.ResizePreview?.Invoke(this, EventArgs.Empty);
-			this.ModelChanged?.Invoke(this, EventArgs.Empty);
 			e.Handled = true;
 		}
 	}
