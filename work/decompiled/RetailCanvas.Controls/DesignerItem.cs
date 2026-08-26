@@ -348,7 +348,16 @@ public sealed class DesignerItem : ContentControl
 				if (double.IsFinite(scale) && scale > 0.0)
 				{
 					Model.FontSizePt = Math.Clamp(_resizeStartFontSize * scale, 1.0, 300.0);
-					if (_root.Children.Count > 0) _root.Children[0].InvalidateVisual();
+					if (_root.Children.Count > 0)
+					{
+						_root.Children[0].InvalidateMeasure();
+						_root.Children[0].InvalidateVisual();
+						if (_root.Children[0] is Border border && border.Child is FrameworkElement child)
+						{
+							child.InvalidateMeasure();
+							child.InvalidateVisual();
+						}
+					}
 				}
 			}
 			Canvas.SetLeft(this, rect.Left);
