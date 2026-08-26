@@ -58,7 +58,9 @@ public sealed class OutlinedTextVisual : FrameworkElement
 		}
 		FontWeight weight = FontWeight.FromOpenTypeWeight(num);
 		Typeface typeface = new Typeface(_fontFamily, style, weight, FontStretches.Normal);
-		double num2 = Math.Max(2.0, _model.FontSizePt * 96.0 / 72.0);
+		// At the editor's minimum zoom, a 1pt glyph would rasterize below one
+		// screen pixel. Keep a small but visible preview floor.
+		double num2 = Math.Max(4.0, _model.FontSizePt * 96.0 / 72.0);
 		double pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
 		double maxTextWidth = Math.Max(1.0, base.ActualWidth);
 		double num3 = Math.Max(1.0, base.ActualHeight);
