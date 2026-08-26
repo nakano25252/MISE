@@ -2614,6 +2614,10 @@ public class MainWindow : Window, IComponentConnector
 		UpdateOverflowClip();
 		foreach (CanvasElementModel model in CurrentPage.Elements.OrderBy((CanvasElementModel x) => x.ZIndex))
 		{
+			model.WidthMm = Math.Clamp(model.WidthMm, 1.0, Math.Max(1.0, CurrentPage.WidthMm));
+			model.HeightMm = Math.Clamp(model.HeightMm, 1.0, Math.Max(1.0, CurrentPage.HeightMm));
+			model.Xmm = Math.Clamp(model.Xmm, 0.0, Math.Max(0.0, CurrentPage.WidthMm - model.WidthMm));
+			model.Ymm = Math.Clamp(model.Ymm, 0.0, Math.Max(0.0, CurrentPage.HeightMm - model.HeightMm));
 			FrameworkElement visual = BuildVisual(model, inverted: false);
 			DesignerItem designerItem = new DesignerItem(model, visual)
 			{
@@ -2659,6 +2663,12 @@ public class MainWindow : Window, IComponentConnector
 			designerItem.ContextMenu = BuildObjectContextMenu(model);
 			designerItem.ModelChanged += delegate
 			{
+				// Normalize committed bounds so a resize or restored project cannot
+				// leave elements at negative coordinates or beyond the page.
+				model.WidthMm = Math.Clamp(model.WidthMm, 1.0, Math.Max(1.0, CurrentPage.WidthMm));
+				model.HeightMm = Math.Clamp(model.HeightMm, 1.0, Math.Max(1.0, CurrentPage.HeightMm));
+				model.Xmm = Math.Clamp(model.Xmm, 0.0, Math.Max(0.0, CurrentPage.WidthMm - model.WidthMm));
+				model.Ymm = Math.Clamp(model.Ymm, 0.0, Math.Max(0.0, CurrentPage.HeightMm - model.HeightMm));
 				MarkDirty();
 				UpdatePropertyPanel();
 				UpdateStatus();
