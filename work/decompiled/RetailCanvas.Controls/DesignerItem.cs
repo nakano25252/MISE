@@ -15,6 +15,8 @@ public sealed class DesignerItem : ContentControl
 
 	private readonly Border _selectionBorder;
 
+	private FrameworkElement _visual;
+
 	private readonly List<Thumb> _handles = new List<Thumb>();
 
 	private Point _dragStart;
@@ -34,12 +36,20 @@ public sealed class DesignerItem : ContentControl
 	private bool _resizing;
 
 	private Point _resizeStartPointer;
-	private double _resizeAccumX;
-	private double _resizeAccumY;
 
 	private Rect _resizeStartRect;
 
-	private double _resizeStartFontSize;
+	private double _resizeStartFontSizePt;
+
+	private double _resizeStartCharacterSpacing;
+
+	private double _resizeStartLineSpacingPt;
+
+	private double _resizeStartLineHeight;
+
+	private double _resizeStartOutlineThicknessPt;
+
+	private double _resizeStartExtrusionDepthPt;
 
 	private string _resizeDirection = string.Empty;
 
@@ -52,6 +62,8 @@ public sealed class DesignerItem : ContentControl
 	private bool _exportMode;
 
 	private bool _isSelected;
+
+	private double _displayZoom = 1.0;
 
 	public CanvasElementModel Model { get; }
 
@@ -67,6 +79,16 @@ public sealed class DesignerItem : ContentControl
 		{
 			_isSelected = value;
 			UpdateSelection(value);
+		}
+	}
+
+	public double DisplayZoom
+	{
+		get => _displayZoom;
+		set
+		{
+			_displayZoom = Math.Clamp(value, 0.25, 4.0);
+			UpdateHandleMetrics();
 		}
 	}
 
@@ -93,6 +115,7 @@ public sealed class DesignerItem : ContentControl
 	public DesignerItem(CanvasElementModel model, FrameworkElement visual)
 	{
 		Model = model;
+		_visual = visual;
 		base.Focusable = true;
 		base.Background = Brushes.Transparent;
 		base.HorizontalContentAlignment = HorizontalAlignment.Stretch;
@@ -125,6 +148,7 @@ public sealed class DesignerItem : ContentControl
 			_root.Children.RemoveAt(0);
 		}
 		_root.Children.Insert(0, visual);
+		_visual = visual;
 	}
 
 	public void SetExportMode(bool enabled)
@@ -248,6 +272,7 @@ public sealed class DesignerItem : ContentControl
 			Canvas.SetTop(this, _resizeStartRect.Top);
 			base.Width = _resizeStartRect.Width;
 			base.Height = _resizeStartRect.Height;
+			RestoreTextScale();
 		}
 		if (_rotating)
 		{
@@ -323,58 +348,34 @@ public sealed class DesignerItem : ContentControl
 	{
 		if (_resizing && !Model.IsLocked && base.Parent is Canvas relativeTo)
 		{
-			// DragDelta is already expressed in the resized element's coordinate
-			// space. Using absolute canvas mouse coordinates double-applied zoom and
-			// caused tiny cursor movements to produce huge jumps.
-			_resizeAccumX += e.HorizontalChange;
-			_resizeAccumY += e.VerticalChange;
-			double dx = _resizeAccumX;
-			double dy = _resizeAccumY;
-			Rect rect = CalculateResizeRect(_resizeStartRect, _resizeDirection, dx, dy, Model.PreserveAspectRatio || Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));
-			// Keep resized elements inside the design canvas. Without this guard a
-			// proportional resize can grow past the page edge, leaving the selection
-			// frame visibly detached from the usable canvas.
-			if (relativeTo.ActualWidth > 0.0 && relativeTo.ActualHeight > 0.0)
+			Point position = Mouse.GetPosition(relativeTo);
+			double dx = position.X - _resizeStartPointer.X;
+			double dy = position.Y - _resizeStartPointer.Y;
+			bool proportionalOnly = Model.Kind == ElementKind.QrCode || (Model.Kind == ElementKind.Text && Model.TextFrameTight);
+			bool preserveAspect = proportionalOnly || Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) || Model.PreserveAspectRatio;
+			double minimumMm = Model.Kind == ElementKind.QrCode ? DimensionMath.QrMinimumMm : DimensionMath.GeneralMinimumMm;
+			double minimumWidth = minimumMm * 96.0 / 25.4;
+			double minimumHeight = minimumMm * 96.0 / 25.4;
+			if (Model.Kind == ElementKind.Text && Model.TextFrameTight)
 			{
-				double maxWidth = Math.Max(12.0, relativeTo.ActualWidth - rect.Left);
-				double maxHeight = Math.Max(12.0, relativeTo.ActualHeight - rect.Top);
-				double width = Math.Min(rect.Width, maxWidth);
-				double height = Math.Min(rect.Height, maxHeight);
-				if (Model.PreserveAspectRatio || Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
-				{
-					double ratio = rect.Width > 0.0 && rect.Height > 0.0 ? rect.Width / rect.Height : 1.0;
-					if (width / Math.Max(1.0, height) > ratio) width = height * ratio;
-					else height = width / Math.Max(0.001, ratio);
-				}
-				rect = new Rect(rect.Left, rect.Top, Math.Max(12.0, width), Math.Max(12.0, height));
+				double minimumTextScale = (_resizeStartFontSizePt > 0.0) ? Math.Min(1.0, 3.0 / _resizeStartFontSizePt) : 1.0;
+				minimumWidth = Math.Max(1.0, _resizeStartRect.Width * minimumTextScale);
+				minimumHeight = Math.Max(1.0, _resizeStartRect.Height * minimumTextScale);
 			}
-			if (Model.Kind == ElementKind.Text && _resizeStartRect.Width > 0.0 && _resizeStartRect.Height > 0.0)
+			Rect rect = CalculateResizeRect(_resizeStartRect, _resizeDirection, dx, dy, preserveAspect, minimumWidth, minimumHeight);
+			if (Model.Kind == ElementKind.Text && Model.TextFrameTight)
 			{
-				double scale = Math.Min(rect.Width / _resizeStartRect.Width, rect.Height / _resizeStartRect.Height);
-				if (double.IsFinite(scale) && scale > 0.0)
-				{
-					Model.FontSizePt = Math.Clamp(_resizeStartFontSize * scale, 1.0, 300.0);
-					if (_root.Children.Count > 0)
-					{
-						_root.Children[0].InvalidateMeasure();
-						_root.Children[0].InvalidateVisual();
-						if (_root.Children[0] is Border border && border.Child is FrameworkElement child)
-						{
-							child.InvalidateMeasure();
-							child.InvalidateVisual();
-						}
-					}
-				}
+				double requestedScale = rect.Width / _resizeStartRect.Width;
+				double allowedScale = DimensionMath.ClampTextScale(_resizeStartFontSizePt, requestedScale);
+				ResizeBounds constrained = ResizeMath.ApplyUniformScale(new ResizeBounds(_resizeStartRect.X, _resizeStartRect.Y, _resizeStartRect.Width, _resizeStartRect.Height), _resizeDirection, allowedScale);
+				rect = new Rect(constrained.X, constrained.Y, constrained.Width, constrained.Height);
 			}
 			Canvas.SetLeft(this, rect.Left);
 			Canvas.SetTop(this, rect.Top);
 			base.Width = rect.Width;
 			base.Height = rect.Height;
-			_selectionBorder.InvalidateVisual();
-			foreach (Thumb handle in _handles) handle.InvalidateVisual();
-			// Notify the host only after Canvas.Left/Top and size are committed;
-			// otherwise the overflow mirror keeps the previous position and draws
-			// a stale duplicate text object.
+			ApplyTextScale(rect);
+			CommitBounds();
 			this.VisualBoundsChanged?.Invoke(this, EventArgs.Empty);
 			this.ResizePreview?.Invoke(this, EventArgs.Empty);
 			e.Handled = true;
@@ -396,14 +397,60 @@ public sealed class DesignerItem : ContentControl
 			{
 				num2 = 0.0;
 			}
-			_resizeStartRect = new Rect(num, num2, Math.Max(12.0, base.ActualWidth), Math.Max(12.0, base.ActualHeight));
-			_resizeStartFontSize = Model.FontSizePt;
+			double minimumStartSize = (Model.Kind == ElementKind.Text && Model.TextFrameTight) ? 1.0 : ((Model.Kind == ElementKind.QrCode ? DimensionMath.QrMinimumMm : DimensionMath.GeneralMinimumMm) * 96.0 / 25.4);
+			_resizeStartRect = new Rect(num, num2, Math.Max(minimumStartSize, base.ActualWidth), Math.Max(minimumStartSize, base.ActualHeight));
+			_resizeStartFontSizePt = Model.FontSizePt;
+			_resizeStartCharacterSpacing = Model.CharacterSpacing;
+			_resizeStartLineSpacingPt = Model.LineSpacingPt;
+			_resizeStartLineHeight = Model.LineHeight;
+			_resizeStartOutlineThicknessPt = Model.TextOutlineThicknessPt;
+			_resizeStartExtrusionDepthPt = Model.TextExtrusionDepthPt;
 			_resizeStartPointer = Mouse.GetPosition(relativeTo);
-			_resizeAccumX = 0.0;
-			_resizeAccumY = 0.0;
 			_resizing = true;
+			thumb.CaptureMouse();
 			this.ChangeStarted?.Invoke(this, EventArgs.Empty);
 		}
+	}
+
+	private void ApplyTextScale(Rect rect)
+	{
+		if (Model.Kind != ElementKind.Text || !Model.TextFrameTight || _resizeStartRect.Width <= 0.0)
+		{
+			return;
+		}
+		double scaleX = Math.Max(0.05, rect.Width / _resizeStartRect.Width);
+		double scaleY = Math.Max(0.05, rect.Height / _resizeStartRect.Height);
+		double scale;
+		if ((_resizeDirection.Contains('E') || _resizeDirection.Contains('W')) && (_resizeDirection.Contains('N') || _resizeDirection.Contains('S')))
+		{
+			scale = Math.Sqrt(scaleX * scaleY);
+		}
+		else
+		{
+			scale = (_resizeDirection.Contains('E') || _resizeDirection.Contains('W')) ? scaleX : scaleY;
+		}
+		Model.FontSizePt = Math.Clamp(_resizeStartFontSizePt * scale, 3.0, 300.0);
+		Model.CharacterSpacing = Math.Clamp(_resizeStartCharacterSpacing * scale, -100.0, 300.0);
+		Model.LineSpacingPt = Math.Clamp(_resizeStartLineSpacingPt * scale, -100.0, 300.0);
+		Model.LineHeight = Math.Max(0.0, _resizeStartLineHeight * scale);
+		Model.TextOutlineThicknessPt = Math.Clamp(_resizeStartOutlineThicknessPt * scale, 0.0, 24.0);
+		Model.TextExtrusionDepthPt = Math.Clamp(_resizeStartExtrusionDepthPt * scale, 0.0, 48.0);
+		_visual.InvalidateVisual();
+	}
+
+	private void RestoreTextScale()
+	{
+		if (Model.Kind != ElementKind.Text || !Model.TextFrameTight)
+		{
+			return;
+		}
+		Model.FontSizePt = _resizeStartFontSizePt;
+		Model.CharacterSpacing = _resizeStartCharacterSpacing;
+		Model.LineSpacingPt = _resizeStartLineSpacingPt;
+		Model.LineHeight = _resizeStartLineHeight;
+		Model.TextOutlineThicknessPt = _resizeStartOutlineThicknessPt;
+		Model.TextExtrusionDepthPt = _resizeStartExtrusionDepthPt;
+		_visual.InvalidateVisual();
 	}
 
 	private void ResizeDragCompleted(object sender, DragCompletedEventArgs e)
@@ -411,85 +458,20 @@ public sealed class DesignerItem : ContentControl
 		if (_resizing)
 		{
 			_resizing = false;
-			CommitBounds();
-			if (Model.Kind == ElementKind.Text && _resizeStartRect.Width > 0.0)
+			if (sender is Thumb thumb && thumb.IsMouseCaptured)
 			{
-				double scale = Math.Min(base.Width / _resizeStartRect.Width, base.Height / _resizeStartRect.Height);
-				if (double.IsFinite(scale) && scale > 0.0)
-				{
-					Model.FontSizePt = Math.Clamp(_resizeStartFontSize * scale, 1.0, 300.0);
-				}
+				thumb.ReleaseMouseCapture();
 			}
+			CommitBounds();
 			this.ModelChanged?.Invoke(this, EventArgs.Empty);
 			this.ChangeCompleted?.Invoke(this, EventArgs.Empty);
 		}
 	}
 
-	private static Rect CalculateResizeRect(Rect start, string direction, double dx, double dy, bool preserveAspect)
+	private static Rect CalculateResizeRect(Rect start, string direction, double dx, double dy, bool preserveAspect, double minimumWidth, double minimumHeight)
 	{
-		double x = start.Left;
-		double y = start.Top;
-		double val = start.Width;
-		double val2 = start.Height;
-		if (direction.Contains('W'))
-		{
-			x = start.Left + dx;
-			val = start.Width - dx;
-		}
-		if (direction.Contains('E'))
-		{
-			val = start.Width + dx;
-		}
-		if (direction.Contains('N'))
-		{
-			y = start.Top + dy;
-			val2 = start.Height - dy;
-		}
-		if (direction.Contains('S'))
-		{
-			val2 = start.Height + dy;
-		}
-		val = Math.Max(12.0, val);
-		val2 = Math.Max(12.0, val2);
-		if (preserveAspect && start.Width > 0.0 && start.Height > 0.0)
-		{
-			double num = start.Width / start.Height;
-			bool flag = direction.Contains('E') || direction.Contains('W');
-			bool flag2 = direction.Contains('N') || direction.Contains('S');
-			if (flag && flag2)
-			{
-				// Corner resize: derive one scale from the signed movement and
-				// keep the opposite corner fixed. Independent clamping of width and
-				// height caused jumps and anchor drift at NW/NE/SW/SE handles.
-				double sx = direction.Contains('W') ? (start.Width - dx) / start.Width : (start.Width + dx) / start.Width;
-				double sy = direction.Contains('N') ? (start.Height - dy) / start.Height : (start.Height + dy) / start.Height;
-				double scale = (Math.Abs(sx - 1.0) >= Math.Abs(sy - 1.0)) ? sx : sy;
-				scale = Math.Max(12.0 / Math.Min(start.Width, start.Height), scale);
-				val = start.Width * scale;
-				val2 = start.Height * scale;
-			}
-			else if (flag)
-			{
-				val2 = val / num;
-				y = start.Top + (start.Height - val2) / 2.0;
-			}
-			else if (flag2)
-			{
-				val = val2 * num;
-				x = start.Left + (start.Width - val) / 2.0;
-			}
-			val = Math.Max(12.0, val);
-			val2 = Math.Max(12.0, val2);
-		}
-		if (direction.Contains('W'))
-		{
-			x = start.Right - val;
-		}
-		if (direction.Contains('N'))
-		{
-			y = start.Bottom - val2;
-		}
-		return new Rect(x, y, val, val2);
+		ResizeBounds result = ResizeMath.Calculate(new ResizeBounds(start.X, start.Y, start.Width, start.Height), direction, dx, dy, preserveAspect, minimumWidth, minimumHeight);
+		return new Rect(result.X, result.Y, result.Width, result.Height);
 	}
 
 	private void CommitBounds()
@@ -508,8 +490,9 @@ public sealed class DesignerItem : ContentControl
 		Model.Ymm = num2 * 25.4 / 96.0;
 		double val = (double.IsNaN(base.Width) ? base.ActualWidth : base.Width);
 		double val2 = (double.IsNaN(base.Height) ? base.ActualHeight : base.Height);
-		Model.WidthMm = Math.Max(12.0, val) * 25.4 / 96.0;
-		Model.HeightMm = Math.Max(12.0, val2) * 25.4 / 96.0;
+		double minimumCommittedSize = (Model.Kind == ElementKind.Text && Model.TextFrameTight) ? 1.0 : ((Model.Kind == ElementKind.QrCode ? DimensionMath.QrMinimumMm : DimensionMath.GeneralMinimumMm) * 96.0 / 25.4);
+		Model.WidthMm = Math.Max(minimumCommittedSize, val) * 25.4 / 96.0;
+		Model.HeightMm = Math.Max(minimumCommittedSize, val2) * 25.4 / 96.0;
 	}
 
 	private void CreateRotationHandle()
@@ -569,6 +552,31 @@ public sealed class DesignerItem : ContentControl
 		};
 		_handles.Add(thumb);
 		_root.Children.Add(thumb);
+		UpdateHandleMetrics();
+	}
+
+	private void UpdateHandleMetrics()
+	{
+		HandleMetrics metrics = ZoomHandleMath.Calculate(_displayZoom);
+		_selectionBorder.BorderThickness = new Thickness(metrics.SelectionBorder);
+		foreach (Thumb handle in _handles)
+		{
+			bool rotation = string.Equals(handle.Tag?.ToString(), "Rotate", StringComparison.Ordinal);
+			if (rotation)
+			{
+				handle.Width = metrics.RotationSize;
+				handle.Height = metrics.RotationSize;
+				handle.Margin = new Thickness(0.0, metrics.RotationOffset, 0.0, 0.0);
+				handle.BorderThickness = new Thickness(metrics.RotationBorder);
+			}
+			else
+			{
+				handle.Width = metrics.ResizeSize;
+				handle.Height = metrics.ResizeSize;
+				handle.Margin = new Thickness(metrics.ResizeOffset);
+				handle.BorderThickness = new Thickness(metrics.ResizeBorder);
+			}
+		}
 	}
 
 	private void UpdateSelection(bool selected)

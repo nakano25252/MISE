@@ -80,6 +80,8 @@ public sealed class CanvasElementModel
 
 	public double CharacterSpacing { get; set; }
 
+	public bool TextFrameTight { get; set; }
+
 	public string ShapeType { get; set; } = "Rectangle";
 
 	public string LineStyle { get; set; } = "実線";

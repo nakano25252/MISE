@@ -334,14 +334,14 @@ public sealed class BackgroundRemovalDialog : Window
 			_settings.Mode = "色をクリック";
 			_baseMode.SelectedItem = "色をクリック";
 			_sample.Text = _settings.SampleColor;
-			UpdatePreviewAsync();
+			_ = UpdatePreviewAsync();
 		};
 		_editor.Changed += delegate
 		{
 		};
 		_editor.Tool = _tool.SelectedItem?.ToString() ?? "色を採る";
 		_editor.BrushRadiusPercent = _brushSize.Value;
-		UpdatePreviewAsync();
+		_ = UpdatePreviewAsync();
 	}
 
 	private UIElement Build()
