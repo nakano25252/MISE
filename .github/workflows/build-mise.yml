@@ -1,0 +1,47 @@
+name: Build MISE Windows EXE
+
+on:
+  push:
+    branches:
+      - "codex/mise-*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore packages
+        run: dotnet restore work/decompiled/RetailCanvas.csproj --runtime win-x64
+
+      - name: Run resize and transform tests
+        run: dotnet run --project work/resize-tests/ResizeTests.csproj --configuration Release
+
+      - name: Build with warnings treated as errors
+        run: dotnet build work/decompiled/RetailCanvas.csproj --configuration Release --no-restore -p:TreatWarningsAsErrors=true
+
+      - name: Publish self-contained single EXE
+        run: dotnet publish work/decompiled/RetailCanvas.csproj --configuration Release --runtime win-x64 --self-contained true --no-restore -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:PublishTrimmed=false -p:PublishReadyToRun=false --output dist
+
+      - name: Rename release executable
+        shell: pwsh
+        run: Move-Item dist/RetailCanvas.exe dist/MISE_1.1.19.exe
+
+      - name: Upload Windows executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: MISE_1.1.19_Windows_x64
+          path: dist/MISE_1.1.19.exe
+          if-no-files-found: error
+          retention-days: 30
