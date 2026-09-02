@@ -24,7 +24,7 @@ public sealed class DesignImportOptionsDialog : Window
 	private readonly CheckBox _editableImages = new CheckBox
 	{
 		Content = "画像を編集可能なオブジェクトにする",
-		IsChecked = true,
+		IsChecked = false,
 		Margin = new Thickness(0.0, 0.0, 0.0, 10.0)
 	};
 
@@ -96,7 +96,7 @@ public sealed class DesignImportOptionsDialog : Window
 
 		content.Children.Add(ModeCard(
 			"編集優先",
-			"文字と画像を個別オブジェクトへ変換します。未導入フォントは近い標準フォントへ置換します。",
+			"文字と画像を個別オブジェクトへ変換します。複雑な背景・透明・重なりは完全再現できない場合があります。",
 			"編集優先で読み込む",
 			delegate
 			{
@@ -124,7 +124,7 @@ public sealed class DesignImportOptionsDialog : Window
 		};
 		detailPanel.Children.Add(new TextBlock
 		{
-			Text = "チェックを外した要素は、元デザインの固定背景としてそのまま残ります。",
+			Text = "チェックを外した要素は元デザインの固定背景に残ります。編集可能にした要素の元位置は近似色で補うため、写真・グラデーション・透明・重なりがある箇所では跡が残る場合があります。完成時の外観を優先する場合は［見た目優先］を選んでください。",
 			TextWrapping = TextWrapping.Wrap,
 			Foreground = Brushes.SlateGray,
 			Margin = new Thickness(0.0, 0.0, 0.0, 12.0)
