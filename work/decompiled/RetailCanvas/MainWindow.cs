@@ -71,6 +71,8 @@ public class MainWindow : Window, IComponentConnector
 
 	private readonly HashSet<Guid> _selectedIds = new HashSet<Guid>();
 
+	private Guid? _activeElementId;
+
 	private readonly Dictionary<Guid, Point> _groupMoveOrigins = new Dictionary<Guid, Point>();
 
 	private readonly Dictionary<string, FontFamily> _embeddedFontFamilies = new Dictionary<string, FontFamily>(StringComparer.OrdinalIgnoreCase);
@@ -407,11 +409,15 @@ public class MainWindow : Window, IComponentConnector
 	{
 		get
 		{
-			if (_selectedIds.Count != 0)
+			if (_activeElementId.HasValue && _selectedIds.Contains(_activeElementId.Value))
 			{
-				return CurrentPage.Elements.FirstOrDefault((CanvasElementModel x) => x.Id == _selectedIds.Last());
+				CanvasElementModel? active = CurrentPage.Elements.FirstOrDefault((CanvasElementModel x) => x.Id == _activeElementId.Value);
+				if (active != null)
+				{
+					return active;
+				}
 			}
-			return null;
+			return CurrentPage.Elements.Where((CanvasElementModel element) => _selectedIds.Contains(element.Id)).OrderBy((CanvasElementModel element) => element.ZIndex).LastOrDefault();
 		}
 	}
 
@@ -431,7 +437,7 @@ public class MainWindow : Window, IComponentConnector
 		ApplyMiseBranding();
 		PageCanvas.ContextMenu = BuildCanvasContextMenu();
 		WindowSizing.AttachMainWindow(this, _settings.Current);
-		VersionText.Text = "MISE 1.1.19";
+		VersionText.Text = "MISE 1.1.20";
 		RefreshFontList();
 		TemplateCombo.ItemsSource = _templates.BuiltInNames.Concat(_templates.UserTemplates()).ToList();
 		TemplateCombo.SelectedIndex = 0;
@@ -470,7 +476,7 @@ public class MainWindow : Window, IComponentConnector
 					{
 						textBlock.Text = "M";
 					}
-					border.ToolTip = "MISE（マイズ） 1.1.19";
+					border.ToolTip = "MISE（マイズ） 1.1.20";
 					border.Margin = new Thickness(3.0, 0.0, 8.0, 0.0);
 				}
 				foreach (TextBlock item in stackPanel.Children.OfType<TextBlock>())
@@ -1786,7 +1792,7 @@ public class MainWindow : Window, IComponentConnector
 				item2.Header = "MISEについて";
 			}
 		}
-		VersionText.Text = "MISE 1.1.19";
+		VersionText.Text = "MISE 1.1.20";
 	}
 
 	private static BitmapSource? LoadMiseIcon()
@@ -1934,6 +1940,11 @@ public class MainWindow : Window, IComponentConnector
 			}
 			if (!_updatingProperties)
 			{
+				CanvasElementModel activeElement = ActiveElement;
+				if (activeElement == null || activeElement.Kind != ElementKind.Text || RejectLockedMutation(activeElement, "文字の太さを変更"))
+				{
+					return;
+				}
 				if (!_fontWeightUndoCaptured)
 				{
 					PushUndo();
@@ -2051,7 +2062,7 @@ public class MainWindow : Window, IComponentConnector
 	{
 		value = NormalizeFontWeight(value);
 		bool flag = false;
-		foreach (CanvasElementModel item in CurrentPage.Elements.Where((CanvasElementModel element) => element.Kind == ElementKind.Text && _selectedIds.Contains(element.Id)))
+		foreach (CanvasElementModel item in CurrentPage.Elements.Where((CanvasElementModel element) => element.Kind == ElementKind.Text && !element.IsLocked && _selectedIds.Contains(element.Id)))
 		{
 			item.FontWeightValue = value;
 			item.Bold = value >= 700;
@@ -2061,7 +2072,7 @@ public class MainWindow : Window, IComponentConnector
 		if (!flag)
 		{
 			CanvasElementModel activeElement = ActiveElement;
-			if (activeElement != null && activeElement.Kind == ElementKind.Text)
+			if (activeElement != null && activeElement.Kind == ElementKind.Text && !activeElement.IsLocked)
 			{
 				activeElement.FontWeightValue = value;
 				activeElement.Bold = value >= 700;
@@ -3058,12 +3069,13 @@ public class MainWindow : Window, IComponentConnector
 
 	private void PasteStyleToSelection()
 	{
-		if (_copiedStyle == null || _selectedIds.Count == 0)
+		List<CanvasElementModel> editable = EditableSelectedElements();
+		if (_copiedStyle == null || editable.Count == 0)
 		{
 			return;
 		}
 		PushUndo();
-		foreach (CanvasElementModel item in CurrentPage.Elements.Where((CanvasElementModel x) => _selectedIds.Contains(x.Id)))
+		foreach (CanvasElementModel item in editable)
 		{
 			item.Opacity = _copiedStyle.Opacity;
 			if (item.Kind == ElementKind.Text && _copiedStyle.Kind == ElementKind.Text)
@@ -3924,10 +3936,15 @@ public class MainWindow : Window, IComponentConnector
 			if (e.Additive && _selectedIds.Contains(designerItem.Model.Id))
 			{
 				_selectedIds.Remove(designerItem.Model.Id);
+				if (_activeElementId == designerItem.Model.Id)
+				{
+					_activeElementId = null;
+				}
 			}
 			else
 			{
 				_selectedIds.Add(designerItem.Model.Id);
+				_activeElementId = designerItem.Model.Id;
 			}
 			UpdateSelectionVisuals();
 		}
@@ -3945,7 +3962,7 @@ public class MainWindow : Window, IComponentConnector
 		{
 			return;
 		}
-		foreach (KeyValuePair<Guid, DesignerItem> item in _visuals.Where((KeyValuePair<Guid, DesignerItem> x) => _selectedIds.Contains(x.Key) && x.Key != leader.Model.Id))
+		foreach (KeyValuePair<Guid, DesignerItem> item in _visuals.Where((KeyValuePair<Guid, DesignerItem> x) => _selectedIds.Contains(x.Key) && x.Key != leader.Model.Id && !x.Value.Model.IsLocked))
 		{
 			double num = Canvas.GetLeft(item.Value);
 			if (double.IsNaN(num))
@@ -4065,7 +4082,7 @@ public class MainWindow : Window, IComponentConnector
 	private void QuickColor_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null)
+		if (activeElement == null || RejectLockedMutation(activeElement, "色を変更"))
 		{
 			return;
 		}
@@ -4081,7 +4098,7 @@ public class MainWindow : Window, IComponentConnector
 			return;
 		}
 		PushUndo();
-		foreach (CanvasElementModel item in CurrentPage.Elements.Where((CanvasElementModel x) => _selectedIds.Contains(x.Id)))
+		foreach (CanvasElementModel item in EditableSelectedElements())
 		{
 			if (item.Kind == ElementKind.Text)
 			{
@@ -4189,7 +4206,7 @@ public class MainWindow : Window, IComponentConnector
 					_overlapDragOrigins.Clear();
 					foreach (Guid selectedId in _selectedIds)
 					{
-						if (_visuals.TryGetValue(selectedId, out DesignerItem value))
+						if (_visuals.TryGetValue(selectedId, out DesignerItem value) && !value.Model.IsLocked)
 						{
 							double left = Canvas.GetLeft(value);
 							double top = Canvas.GetTop(value);
@@ -4540,6 +4557,12 @@ public class MainWindow : Window, IComponentConnector
 	{
 		try
 		{
+			CanvasElementModel selectedElement = ActiveElement;
+			if (selectedElement != null && RejectLockedMutation(selectedElement, "スポイト色を適用"))
+			{
+				ReturnToSelectionMode("ロック中の要素には色を適用できません");
+				return;
+			}
 			int num = Math.Max(1, (int)Math.Ceiling(PageCanvas.ActualWidth));
 			int num2 = Math.Max(1, (int)Math.Ceiling(PageCanvas.ActualHeight));
 			int x = Math.Clamp((int)point.X, 0, num - 1);
@@ -4554,7 +4577,7 @@ public class MainWindow : Window, IComponentConnector
 			int value3 = ((b == 0) ? array[0] : Math.Clamp(array[0] * 255 / b, 0, 255));
 			string text = $"#FF{value:X2}{value2:X2}{value3:X2}";
 			PushUndo();
-			CanvasElementModel activeElement = ActiveElement;
+			CanvasElementModel activeElement = selectedElement;
 			if (activeElement != null)
 			{
 				if (activeElement.Kind == ElementKind.Text)
@@ -4604,6 +4627,7 @@ public class MainWindow : Window, IComponentConnector
 		{
 			_selectedIds.Clear();
 			_selectedIds.Add(canvasElementModel.Id);
+			_activeElementId = canvasElementModel.Id;
 			UpdateSelectionVisuals();
 		}
 	}
@@ -4719,11 +4743,16 @@ public class MainWindow : Window, IComponentConnector
 
 	private void UpdateValidationCount()
 	{
-		List<ValidationIssue> source = _validator.Validate(CurrentPage);
+		List<ValidationIssue> source = ValidateCurrentPage();
 		int num = source.Count((ValidationIssue x) => x.Severity == IssueSeverity.Error);
 		int num2 = source.Count((ValidationIssue x) => x.Severity == IssueSeverity.Warning);
 		ErrorCountText.Text = ((num + num2 == 0) ? "チェック: 問題なし" : $"チェック: 赤{num} / 黄{num2}");
 		ErrorCountText.Foreground = ((num > 0) ? Brushes.Firebrick : ((num2 > 0) ? Brushes.DarkOrange : Brushes.ForestGreen));
+	}
+
+	private List<ValidationIssue> ValidateCurrentPage()
+	{
+		return _validator.Validate(CurrentPage, _project.EmbeddedFonts.Select((EmbeddedFontModel font) => font.FamilyName));
 	}
 
 	private void MarkDirty()
@@ -5809,7 +5838,7 @@ public class MainWindow : Window, IComponentConnector
 	private void EditImageExtrusion_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement != null && activeElement.Kind == ElementKind.Image)
+		if (activeElement != null && activeElement.Kind == ElementKind.Image && !RejectLockedMutation(activeElement, "画像効果を変更"))
 		{
 			ImageExtrusionDialog imageExtrusionDialog = new ImageExtrusionDialog(activeElement)
 			{
@@ -5832,7 +5861,7 @@ public class MainWindow : Window, IComponentConnector
 	private void EditTransparentImageTrim_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || activeElement.Kind != ElementKind.Image || string.IsNullOrWhiteSpace(activeElement.ImageDataBase64))
+		if (activeElement == null || activeElement.Kind != ElementKind.Image || RejectLockedMutation(activeElement, "透明余白を編集") || string.IsNullOrWhiteSpace(activeElement.ImageDataBase64))
 		{
 			return;
 		}
@@ -6069,31 +6098,58 @@ public class MainWindow : Window, IComponentConnector
 	{
 		_selectedIds.Clear();
 		_selectedIds.Add(id);
+		_activeElementId = id;
+	}
+
+	private List<CanvasElementModel> EditableSelectedElements()
+	{
+		return CurrentPage.Elements.Where((CanvasElementModel element) => _selectedIds.Contains(element.Id) && !element.IsLocked).ToList();
+	}
+
+	private bool RejectLockedMutation(CanvasElementModel? element, string operation)
+	{
+		if (element == null || !element.IsLocked)
+		{
+			return false;
+		}
+		StatusText.Text = $"「{element.Name}」はロック中のため{operation}できません。先にロックを解除してください";
+		return true;
 	}
 
 	private void Delete_Click(object sender, RoutedEventArgs e)
 	{
-		if (_selectedIds.Count != 0)
+		List<CanvasElementModel> editable = EditableSelectedElements();
+		if (editable.Count != 0)
 		{
 			PushUndo();
-			CurrentPage.Elements.RemoveAll((CanvasElementModel x) => _selectedIds.Contains(x.Id));
-			_selectedIds.Clear();
+			HashSet<Guid> editableIds = editable.Select((CanvasElementModel element) => element.Id).ToHashSet();
+			CurrentPage.Elements.RemoveAll((CanvasElementModel x) => editableIds.Contains(x.Id));
+			_selectedIds.RemoveWhere((Guid id) => editableIds.Contains(id));
 			NormalizeZ();
 			MarkDirty();
 			RebuildCanvas();
 			RefreshLayers();
 			UpdatePropertyPanel();
 		}
+		else if (_selectedIds.Count != 0)
+		{
+			StatusText.Text = "選択項目はロック中のため削除できません";
+		}
 	}
 
 	private void Duplicate_Click(object sender, RoutedEventArgs e)
 	{
-		if (_selectedIds.Count == 0)
+		List<CanvasElementModel> editable = EditableSelectedElements();
+		if (editable.Count == 0)
 		{
+			if (_selectedIds.Count != 0)
+			{
+				StatusText.Text = "選択項目はロック中のため複製できません";
+			}
 			return;
 		}
 		PushUndo();
-		List<CanvasElementModel> list = CurrentPage.Elements.Where((CanvasElementModel x) => _selectedIds.Contains(x.Id)).Select(CloneElement).ToList();
+		List<CanvasElementModel> list = editable.Select(CloneElement).ToList();
 		_selectedIds.Clear();
 		foreach (CanvasElementModel item in list)
 		{
@@ -6775,7 +6831,7 @@ public class MainWindow : Window, IComponentConnector
 			return;
 		}
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || !(sender is FrameworkElement frameworkElement))
+		if (activeElement == null || RejectLockedMutation(activeElement, "プロパティを変更") || !(sender is FrameworkElement frameworkElement))
 		{
 			return;
 		}
@@ -6944,8 +7000,28 @@ public class MainWindow : Window, IComponentConnector
 		CanvasElementModel activeElement = ActiveElement;
 		if (activeElement != null && sender is CheckBox checkBox)
 		{
+			string property = checkBox.Tag?.ToString() ?? string.Empty;
+			if (activeElement.IsLocked && property != "Lock")
+			{
+				RejectLockedMutation(activeElement, "プロパティを変更");
+				UpdatePropertyPanel();
+				return;
+			}
+			bool requested = checkBox.IsChecked == true;
+			bool current = property switch
+			{
+				"Aspect" => IsProportionalOnly(activeElement) || activeElement.PreserveAspectRatio,
+				"Lock" => activeElement.IsLocked,
+				"Visible" => activeElement.IsVisible,
+				_ => requested
+			};
+			if (current == requested || (property == "Aspect" && IsProportionalOnly(activeElement)))
+			{
+				UpdatePropertyPanel();
+				return;
+			}
 			PushUndo();
-			switch (checkBox.Tag?.ToString())
+			switch (property)
 			{
 			case "Aspect":
 				if (IsProportionalOnly(activeElement))
@@ -6979,7 +7055,7 @@ public class MainWindow : Window, IComponentConnector
 			return;
 		}
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || activeElement.Kind != ElementKind.Text)
+		if (activeElement == null || activeElement.Kind != ElementKind.Text || activeElement.IsLocked)
 		{
 			_liveTextEditingId = null;
 			return;
@@ -7063,7 +7139,7 @@ public class MainWindow : Window, IComponentConnector
 			return;
 		}
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || activeElement.Kind != ElementKind.Text || !(sender is FrameworkElement frameworkElement))
+		if (activeElement == null || activeElement.Kind != ElementKind.Text || RejectLockedMutation(activeElement, "文字設定を変更") || !(sender is FrameworkElement frameworkElement))
 		{
 			return;
 		}
@@ -7159,7 +7235,7 @@ public class MainWindow : Window, IComponentConnector
 	private void TextColorPicker_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement != null && activeElement.Kind == ElementKind.Text)
+		if (activeElement != null && activeElement.Kind == ElementKind.Text && !RejectLockedMutation(activeElement, "文字色を変更"))
 		{
 			string text = ShowProjectColor(activeElement.TextColor);
 			if (text != null)
@@ -7177,7 +7253,7 @@ public class MainWindow : Window, IComponentConnector
 	private void TextEffectColorPicker_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || activeElement.Kind != ElementKind.Text || !(sender is FrameworkElement { Tag: var tag }))
+		if (activeElement == null || activeElement.Kind != ElementKind.Text || RejectLockedMutation(activeElement, "文字効果を変更") || !(sender is FrameworkElement { Tag: var tag }))
 		{
 			return;
 		}
@@ -7214,7 +7290,7 @@ public class MainWindow : Window, IComponentConnector
 	private void TextBackgroundTransparent_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement != null && activeElement.Kind == ElementKind.Text)
+		if (activeElement != null && activeElement.Kind == ElementKind.Text && !RejectLockedMutation(activeElement, "文字背景を変更"))
 		{
 			PushUndo();
 			activeElement.TextBackground = "#00FFFFFF";
@@ -7341,7 +7417,7 @@ public class MainWindow : Window, IComponentConnector
 			return;
 		}
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement != null && activeElement.Kind == ElementKind.Text && !string.IsNullOrWhiteSpace(FontCombo.SelectedItem?.ToString()))
+		if (activeElement != null && activeElement.Kind == ElementKind.Text && !activeElement.IsLocked && !string.IsNullOrWhiteSpace(FontCombo.SelectedItem?.ToString()))
 		{
 			string font = FontCombo.SelectedItem.ToString();
 			PushUndo();
@@ -7389,7 +7465,7 @@ public class MainWindow : Window, IComponentConnector
 			return;
 		}
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement != null && activeElement.Kind == ElementKind.Text && sender is ToggleButton toggleButton)
+		if (activeElement != null && activeElement.Kind == ElementKind.Text && !RejectLockedMutation(activeElement, "文字装飾を変更") && sender is ToggleButton toggleButton)
 		{
 			PushUndo();
 			switch (toggleButton.Tag?.ToString())
@@ -7415,7 +7491,7 @@ public class MainWindow : Window, IComponentConnector
 	private void TextAlign_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement != null && activeElement.Kind == ElementKind.Text && sender is FrameworkElement frameworkElement)
+		if (activeElement != null && activeElement.Kind == ElementKind.Text && !RejectLockedMutation(activeElement, "文字揃えを変更") && sender is FrameworkElement frameworkElement)
 		{
 			PushUndo();
 			activeElement.TextAlignment = frameworkElement.Tag?.ToString() ?? "Center";
@@ -7431,7 +7507,7 @@ public class MainWindow : Window, IComponentConnector
 			return;
 		}
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || activeElement.Kind != ElementKind.Shape || !(sender is FrameworkElement frameworkElement))
+		if (activeElement == null || activeElement.Kind != ElementKind.Shape || RejectLockedMutation(activeElement, "図形設定を変更") || !(sender is FrameworkElement frameworkElement))
 		{
 			return;
 		}
@@ -7547,7 +7623,7 @@ public class MainWindow : Window, IComponentConnector
 	private void ShapeColorPicker_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || activeElement.Kind != ElementKind.Shape || !(sender is FrameworkElement { Tag: var tag }))
+		if (activeElement == null || activeElement.Kind != ElementKind.Shape || RejectLockedMutation(activeElement, "図形色を変更") || !(sender is FrameworkElement { Tag: var tag }))
 		{
 			return;
 		}
@@ -7579,7 +7655,7 @@ public class MainWindow : Window, IComponentConnector
 	private void EditShapePoints_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || activeElement.Kind != ElementKind.Shape)
+		if (activeElement == null || activeElement.Kind != ElementKind.Shape || RejectLockedMutation(activeElement, "頂点を編集"))
 		{
 			return;
 		}
@@ -7616,7 +7692,7 @@ public class MainWindow : Window, IComponentConnector
 	private void EditCorners_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement != null && activeElement.Kind == ElementKind.Shape)
+		if (activeElement != null && activeElement.Kind == ElementKind.Shape && !RejectLockedMutation(activeElement, "角を編集"))
 		{
 			CornerEditorDialog cornerEditorDialog = new CornerEditorDialog(activeElement)
 			{
@@ -7640,7 +7716,7 @@ public class MainWindow : Window, IComponentConnector
 	private void EditPanelDividers_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || activeElement.Kind != ElementKind.Shape || activeElement.ShapeType == "Line")
+		if (activeElement == null || activeElement.Kind != ElementKind.Shape || RejectLockedMutation(activeElement, "分割線を編集") || activeElement.ShapeType == "Line")
 		{
 			MessageBox.Show("線以外の図形を選択してください。", "パネル分割線");
 			return;
@@ -7680,7 +7756,7 @@ public class MainWindow : Window, IComponentConnector
 	private void EditPanelCellColors_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || activeElement.Kind != ElementKind.Shape || !IsPanelElement(activeElement))
+		if (activeElement == null || activeElement.Kind != ElementKind.Shape || RejectLockedMutation(activeElement, "区画色を変更") || !IsPanelElement(activeElement))
 		{
 			MessageBox.Show("パネル図形を選択してください。", "区画ごとの色");
 			return;
@@ -7703,7 +7779,7 @@ public class MainWindow : Window, IComponentConnector
 	private void EditElementTexture_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null)
+		if (activeElement == null || RejectLockedMutation(activeElement, "テクスチャを変更"))
 		{
 			return;
 		}
@@ -7716,7 +7792,7 @@ public class MainWindow : Window, IComponentConnector
 			return;
 		}
 		PushUndo();
-		foreach (CanvasElementModel item in CurrentPage.Elements.Where((CanvasElementModel x) => _selectedIds.Contains(x.Id)))
+		foreach (CanvasElementModel item in EditableSelectedElements())
 		{
 			item.TextureName = texturePickerDialog.TextureName;
 			item.TextureDataBase64 = texturePickerDialog.TextureDataBase64;
@@ -7754,7 +7830,7 @@ public class MainWindow : Window, IComponentConnector
 			return;
 		}
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || activeElement.Kind != ElementKind.QrCode || !(sender is FrameworkElement frameworkElement))
+		if (activeElement == null || activeElement.Kind != ElementKind.QrCode || RejectLockedMutation(activeElement, "QR設定を変更") || !(sender is FrameworkElement frameworkElement))
 		{
 			return;
 		}
@@ -7786,7 +7862,7 @@ public class MainWindow : Window, IComponentConnector
 	private void QrColorPicker_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || activeElement.Kind != ElementKind.QrCode || !(sender is FrameworkElement { Tag: var tag }))
+		if (activeElement == null || activeElement.Kind != ElementKind.QrCode || RejectLockedMutation(activeElement, "QR色を変更") || !(sender is FrameworkElement { Tag: var tag }))
 		{
 			return;
 		}
@@ -7815,7 +7891,7 @@ public class MainWindow : Window, IComponentConnector
 		if (!_updatingProperties)
 		{
 			CanvasElementModel activeElement = ActiveElement;
-			if (activeElement != null && activeElement.Kind == ElementKind.QrCode && QrLevelCombo.SelectedItem is ComboBoxItem comboBoxItem)
+			if (activeElement != null && activeElement.Kind == ElementKind.QrCode && !activeElement.IsLocked && QrLevelCombo.SelectedItem is ComboBoxItem comboBoxItem)
 			{
 				PushUndo();
 				activeElement.QrErrorCorrection = comboBoxItem.Content?.ToString() ?? "M";
@@ -7835,7 +7911,7 @@ public class MainWindow : Window, IComponentConnector
 	private void ReplaceImage_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || activeElement.Kind != ElementKind.Image)
+		if (activeElement == null || activeElement.Kind != ElementKind.Image || RejectLockedMutation(activeElement, "画像を差し替え"))
 		{
 			return;
 		}
@@ -7877,7 +7953,7 @@ public class MainWindow : Window, IComponentConnector
 	private void RemoveImageBackground_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || activeElement.Kind != ElementKind.Image)
+		if (activeElement == null || activeElement.Kind != ElementKind.Image || RejectLockedMutation(activeElement, "画像背景を編集"))
 		{
 			return;
 		}
@@ -7926,7 +8002,7 @@ public class MainWindow : Window, IComponentConnector
 	private void ResetImageCutout_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement != null && activeElement.Kind == ElementKind.Image && !string.IsNullOrWhiteSpace(activeElement.ImageOriginalDataBase64))
+		if (activeElement != null && activeElement.Kind == ElementKind.Image && !RejectLockedMutation(activeElement, "画像背景を復元") && !string.IsNullOrWhiteSpace(activeElement.ImageOriginalDataBase64))
 		{
 			PushUndo();
 			activeElement.ImageDataBase64 = activeElement.ImageOriginalDataBase64;
@@ -7941,7 +8017,7 @@ public class MainWindow : Window, IComponentConnector
 	private void ResetImageRatio_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement != null && activeElement.Kind == ElementKind.Image && activeElement.ImagePixelWidth > 0 && activeElement.ImagePixelHeight > 0)
+		if (activeElement != null && activeElement.Kind == ElementKind.Image && !RejectLockedMutation(activeElement, "画像比率を変更") && activeElement.ImagePixelWidth > 0 && activeElement.ImagePixelHeight > 0)
 		{
 			PushUndo();
 			activeElement.HeightMm = activeElement.WidthMm * (double)activeElement.ImagePixelHeight / (double)activeElement.ImagePixelWidth;
@@ -7982,7 +8058,7 @@ public class MainWindow : Window, IComponentConnector
 
 	private void Align_Click(object sender, RoutedEventArgs e)
 	{
-		List<CanvasElementModel> list = CurrentPage.Elements.Where((CanvasElementModel x) => _selectedIds.Contains(x.Id)).ToList();
+		List<CanvasElementModel> list = EditableSelectedElements();
 		if (list.Count == 0 || !(sender is FrameworkElement frameworkElement))
 		{
 			return;
@@ -8039,7 +8115,7 @@ public class MainWindow : Window, IComponentConnector
 	private void LayerOrder_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel active = ActiveElement;
-		if (active == null || !(sender is FrameworkElement frameworkElement))
+		if (active == null || RejectLockedMutation(active, "レイヤー順を変更") || !(sender is FrameworkElement frameworkElement))
 		{
 			return;
 		}
@@ -8106,7 +8182,7 @@ public class MainWindow : Window, IComponentConnector
 
 	private void Validate_Click(object sender, RoutedEventArgs e)
 	{
-		ValidationDialog validationDialog = new ValidationDialog(_validator.Validate(CurrentPage))
+		ValidationDialog validationDialog = new ValidationDialog(ValidateCurrentPage())
 		{
 			Owner = this
 		};
@@ -8130,7 +8206,7 @@ public class MainWindow : Window, IComponentConnector
 			StatusText.Text = "書き出し・印刷処理が進行中です";
 			return;
 		}
-		List<ValidationIssue> source = _validator.Validate(CurrentPage);
+		List<ValidationIssue> source = ValidateCurrentPage();
 		if (_settings.Current.WarnBeforeExportOnErrors && source.Any((ValidationIssue x) => x.Severity == IssueSeverity.Error) && MessageBox.Show("赤色のエラーが残っています。内容を確認せずに書き出しますか？", "書き出し前チェック", MessageBoxButton.YesNo, MessageBoxImage.Exclamation) != MessageBoxResult.Yes)
 		{
 			Validate_Click(sender, e);
@@ -8766,7 +8842,7 @@ public class MainWindow : Window, IComponentConnector
 
 	private ImpositionOutput BuildImposition(ImpositionDialogResult options, int dpi)
 	{
-		RenderTargetBitmap imageSource = RenderCurrentPage(180, transparent: false);
+		RenderTargetBitmap imageSource = RenderCurrentPage(dpi, transparent: false);
 		PaperSizeDefinition paperSizeDefinition = PaperCatalog.Get(options.PaperName);
 		double num = (options.Landscape ? paperSizeDefinition.HeightMm : paperSizeDefinition.WidthMm);
 		double num2 = (options.Landscape ? paperSizeDefinition.WidthMm : paperSizeDefinition.HeightMm);
@@ -9191,7 +9267,7 @@ public class MainWindow : Window, IComponentConnector
 
 	private void About_Click(object sender, RoutedEventArgs e)
 	{
-		MessageBox.Show("MISE（マイズ） 1.1.19\n\nWindows向け販促物作成ソフト\n\n© 2026 MISE", "MISEについて", MessageBoxButton.OK, MessageBoxImage.Asterisk);
+		MessageBox.Show("MISE（マイズ） 1.1.20\n\nWindows向け販促物作成ソフト\n\n© 2026 MISE", "MISEについて", MessageBoxButton.OK, MessageBoxImage.Asterisk);
 	}
 
 	private void ZoomSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -9738,9 +9814,16 @@ public class MainWindow : Window, IComponentConnector
 		{
 			return;
 		}
+		List<CanvasElementModel> keyboardMoveTargets = EditableSelectedElements();
+		if (keyboardMoveTargets.Count == 0)
+		{
+			StatusText.Text = "選択項目はロック中のため移動できません";
+			e.Handled = true;
+			return;
+		}
 		PushUndo();
 		double num5 = (flag4 ? 10.0 : 1.0);
-		foreach (CanvasElementModel item2 in CurrentPage.Elements.Where((CanvasElementModel x) => _selectedIds.Contains(x.Id) && !x.IsLocked))
+		foreach (CanvasElementModel item2 in keyboardMoveTargets)
 		{
 			if (e.Key == Key.Left)
 			{
