@@ -36,12 +36,12 @@ jobs:
 
       - name: Rename release executable
         shell: pwsh
-        run: Move-Item dist/RetailCanvas.exe dist/MISE_1.1.19.exe
+        run: Move-Item dist/RetailCanvas.exe dist/MISE_1.1.20.exe
 
       - name: Upload Windows executable
         uses: actions/upload-artifact@v4
         with:
-          name: MISE_1.1.19_Windows_x64
-          path: dist/MISE_1.1.19.exe
+          name: MISE_1.1.20_Windows_x64
+          path: dist/MISE_1.1.20.exe
           if-no-files-found: error
           retention-days: 30
