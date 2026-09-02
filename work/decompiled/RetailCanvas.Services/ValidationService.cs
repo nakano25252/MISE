@@ -10,9 +10,10 @@ namespace RetailCanvas.Services;
 
 public sealed class ValidationService
 {
-	public List<ValidationIssue> Validate(PageModel page)
+	public List<ValidationIssue> Validate(PageModel page, IEnumerable<string>? embeddedFontFamilies = null)
 	{
 		List<ValidationIssue> list = new List<ValidationIssue>();
+		HashSet<string> availableEmbeddedFonts = new HashSet<string>(embeddedFontFamilies ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
 		double safeMarginMm = page.SafeMarginMm;
 		foreach (CanvasElementModel element in page.Elements.Where((CanvasElementModel x) => x.IsVisible))
 		{
@@ -50,13 +51,17 @@ public sealed class ValidationService
 				{
 					list.Add(Issue(IssueSeverity.Warning, "文字のコントラストが不足しています", "文字色または背景色を変更し、売場での視認性を高めてください。", element));
 				}
-				if (!Fonts.SystemFontFamilies.Any((FontFamily f) => string.Equals(f.Source, element.FontFamily, StringComparison.OrdinalIgnoreCase)))
+				if (!availableEmbeddedFonts.Contains(element.FontFamily) && !Fonts.SystemFontFamilies.Any((FontFamily f) => string.Equals(f.Source, element.FontFamily, StringComparison.OrdinalIgnoreCase)))
 				{
 					list.Add(Issue(IssueSeverity.Error, "フォントが見つかりません", element.FontFamily + " を別のフォントへ置換してください。", element));
 				}
 			}
 			else if (element.Kind == ElementKind.Image)
 			{
+				if (!string.IsNullOrWhiteSpace(element.PdfSourcePath) && !File.Exists(element.PdfSourcePath))
+				{
+					list.Add(Issue(IssueSeverity.Warning, "PDF／AI原本が見つかりません", "編集用プレビューは表示できますが、高品質な再描画には元のPDF／AIファイルを同じ場所へ戻してください。", element));
+				}
 				if (string.IsNullOrWhiteSpace(element.ImageDataBase64) && (string.IsNullOrWhiteSpace(element.ImageSourcePath) || !File.Exists(element.ImageSourcePath)))
 				{
 					list.Add(Issue(IssueSeverity.Error, "画像データが見つかりません", "画像を再リンクまたは差し替えてください。", element));
