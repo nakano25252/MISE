@@ -148,7 +148,12 @@ public sealed class OutlinedTextVisual : FrameworkElement
 			Rect effectBounds = GetEffectBounds(geometry, _model);
 			double scaleX = Math.Max(0.01, (base.ActualWidth - 2.0) / Math.Max(0.01, effectBounds.Width));
 			double scaleY = Math.Max(0.01, (base.ActualHeight - 2.0) / Math.Max(0.01, effectBounds.Height));
-			Matrix fitMatrix = new Matrix(scaleX, 0.0, 0.0, scaleY, 1.0 - effectBounds.Left * scaleX, 1.0 - effectBounds.Top * scaleY);
+			double scale = Math.Min(scaleX, scaleY);
+			double fittedWidth = effectBounds.Width * scale;
+			double fittedHeight = effectBounds.Height * scale;
+			double offsetX = 1.0 + Math.Max(0.0, (base.ActualWidth - 2.0 - fittedWidth) / 2.0) - effectBounds.Left * scale;
+			double offsetY = 1.0 + Math.Max(0.0, (base.ActualHeight - 2.0 - fittedHeight) / 2.0) - effectBounds.Top * scale;
+			Matrix fitMatrix = new Matrix(scale, 0.0, 0.0, scale, offsetX, offsetY);
 			dc.PushTransform(new MatrixTransform(fitMatrix));
 			normalized = true;
 		}
