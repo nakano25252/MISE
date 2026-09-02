@@ -39,7 +39,7 @@ public class MainWindow : Window, IComponentConnector
 
 	private sealed record ImageSnapshot(string? DataBase64, string? OriginalDataBase64, string? PreTrimDataBase64);
 
-	private sealed record ProjectSnapshot(string Json, Dictionary<Guid, ImageSnapshot> Images);
+	private sealed record ProjectSnapshot(string Json, Dictionary<Guid, ImageSnapshot> Images, int PageIndex, Guid[] SelectedIds);
 
 	private sealed record SnapCandidate(double Offset, double Guide, string Label);
 
@@ -71,9 +71,13 @@ public class MainWindow : Window, IComponentConnector
 
 	private readonly HashSet<Guid> _selectedIds = new HashSet<Guid>();
 
+	private Guid? _activeElementId;
+
 	private readonly Dictionary<Guid, Point> _groupMoveOrigins = new Dictionary<Guid, Point>();
 
 	private readonly Dictionary<string, FontFamily> _embeddedFontFamilies = new Dictionary<string, FontFamily>(StringComparer.OrdinalIgnoreCase);
+
+	private Dictionary<string, string>? _systemFontLookup;
 
 	private ProjectModel _project = new ProjectModel();
 
@@ -88,6 +92,8 @@ public class MainWindow : Window, IComponentConnector
 	private bool _refreshing;
 
 	private bool _updatingProperties;
+
+	private Guid? _liveTextEditingId;
 
 	private bool _leftManuallyHidden;
 
@@ -304,8 +310,6 @@ public class MainWindow : Window, IComponentConnector
 	private TextBlock? _fontWeightValueText;
 
 	private bool _fontWeightUndoCaptured;
-	private bool _textContentUndoCaptured;
-	private bool _generalPropertyUndoCaptured;
 
 	private TextBox? _characterSpacingBox;
 
@@ -405,17 +409,23 @@ public class MainWindow : Window, IComponentConnector
 	{
 		get
 		{
-			if (_selectedIds.Count != 0)
+			if (_activeElementId.HasValue && _selectedIds.Contains(_activeElementId.Value))
 			{
-				return CurrentPage.Elements.FirstOrDefault((CanvasElementModel x) => x.Id == _selectedIds.Last());
+				CanvasElementModel? active = CurrentPage.Elements.FirstOrDefault((CanvasElementModel x) => x.Id == _activeElementId.Value);
+				if (active != null)
+				{
+					return active;
+				}
 			}
-			return null;
+			return CurrentPage.Elements.Where((CanvasElementModel element) => _selectedIds.Contains(element.Id)).OrderBy((CanvasElementModel element) => element.ZIndex).LastOrDefault();
 		}
 	}
 
 	public MainWindow()
 	{
 		InitializeComponent();
+		TextContentBox.TextChanged += TextContentBox_TextChanged;
+		TextContentBox.LostKeyboardFocus += TextContentBox_LostKeyboardFocus;
 		CanvasScroll.RequestBringIntoView += delegate(object _, RequestBringIntoViewEventArgs e)
 		{
 			e.Handled = true;
@@ -427,7 +437,7 @@ public class MainWindow : Window, IComponentConnector
 		ApplyMiseBranding();
 		PageCanvas.ContextMenu = BuildCanvasContextMenu();
 		WindowSizing.AttachMainWindow(this, _settings.Current);
-		VersionText.Text = "MISE 1.1.12";
+		VersionText.Text = "MISE 1.1.20";
 		RefreshFontList();
 		TemplateCombo.ItemsSource = _templates.BuiltInNames.Concat(_templates.UserTemplates()).ToList();
 		TemplateCombo.SelectedIndex = 0;
@@ -466,7 +476,7 @@ public class MainWindow : Window, IComponentConnector
 					{
 						textBlock.Text = "M";
 					}
-					border.ToolTip = "MISE（マイズ） 1.1.12";
+					border.ToolTip = "MISE（マイズ） 1.1.20";
 					border.Margin = new Thickness(3.0, 0.0, 8.0, 0.0);
 				}
 				foreach (TextBlock item in stackPanel.Children.OfType<TextBlock>())
@@ -515,6 +525,7 @@ public class MainWindow : Window, IComponentConnector
 		EnhanceTextureControls();
 		OrganizePropertyPanel();
 		AddNumericSpinners();
+		ConfigureTransformControls();
 		EnhanceImagePropertyPanel();
 		ShowInsertPalette("テンプレート");
 	}
@@ -995,7 +1006,7 @@ public class MainWindow : Window, IComponentConnector
 			ToolTip = tooltip,
 			Height = 46.0,
 			Margin = new Thickness(1.0),
-			Padding = new Thickness(0.0),
+			Padding = new Thickness(2.0),
 			Background = Brushes.Transparent,
 			Foreground = new SolidColorBrush(Color.FromRgb(220, 226, 236)),
 			BorderThickness = new Thickness(0.0),
@@ -1781,7 +1792,7 @@ public class MainWindow : Window, IComponentConnector
 				item2.Header = "MISEについて";
 			}
 		}
-		VersionText.Text = "MISE 1.1.12";
+		VersionText.Text = "MISE 1.1.20";
 	}
 
 	private static BitmapSource? LoadMiseIcon()
@@ -1929,6 +1940,11 @@ public class MainWindow : Window, IComponentConnector
 			}
 			if (!_updatingProperties)
 			{
+				CanvasElementModel activeElement = ActiveElement;
+				if (activeElement == null || activeElement.Kind != ElementKind.Text || RejectLockedMutation(activeElement, "文字の太さを変更"))
+				{
+					return;
+				}
 				if (!_fontWeightUndoCaptured)
 				{
 					PushUndo();
@@ -2046,19 +2062,21 @@ public class MainWindow : Window, IComponentConnector
 	{
 		value = NormalizeFontWeight(value);
 		bool flag = false;
-		foreach (CanvasElementModel item in CurrentPage.Elements.Where((CanvasElementModel element) => element.Kind == ElementKind.Text && _selectedIds.Contains(element.Id)))
+		foreach (CanvasElementModel item in CurrentPage.Elements.Where((CanvasElementModel element) => element.Kind == ElementKind.Text && !element.IsLocked && _selectedIds.Contains(element.Id)))
 		{
 			item.FontWeightValue = value;
 			item.Bold = value >= 700;
+			FitTextFrame(item);
 			flag = true;
 		}
 		if (!flag)
 		{
 			CanvasElementModel activeElement = ActiveElement;
-			if (activeElement != null && activeElement.Kind == ElementKind.Text)
+			if (activeElement != null && activeElement.Kind == ElementKind.Text && !activeElement.IsLocked)
 			{
 				activeElement.FontWeightValue = value;
 				activeElement.Bold = value >= 700;
+				FitTextFrame(activeElement);
 				flag = true;
 			}
 		}
@@ -2317,6 +2335,14 @@ public class MainWindow : Window, IComponentConnector
 		}
 	}
 
+	private void ConfigureTransformControls()
+	{
+		AspectCheck.Content = "縦横比を固定";
+		AspectCheck.ToolTip = "ONでは幅と高さを現在の比率で連動します。文字（タイトフレーム）とQRコードは品質維持のため常に連動します。";
+		WidthBox.ToolTip = "幅（mm）。縦横比固定中は高さも同じ倍率で更新します。";
+		HeightBox.ToolTip = "高さ（mm）。縦横比固定中は幅も同じ倍率で更新します。";
+	}
+
 	private void StepNumericBox(TextBox box, int direction)
 	{
 		if (!TryNumber(box.Text, out var value))
@@ -2377,22 +2403,30 @@ public class MainWindow : Window, IComponentConnector
 		}
 	}
 
-	private void MainWindow_Loaded(object sender, RoutedEventArgs e)
+	private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
 	{
 		RefreshMiseVisibleLabels();
 		ApplyUiPreferences();
 		UpdateToolbarForWidth(base.ActualWidth);
 		if (!string.IsNullOrWhiteSpace(App.StartupProjectPath))
 		{
-			OpenProject(App.StartupProjectPath);
+			string extension = System.IO.Path.GetExtension(App.StartupProjectPath);
+			if (extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase) || extension.Equals(".ai", StringComparison.OrdinalIgnoreCase))
+			{
+				await OpenDesignWithPromptAsync(App.StartupProjectPath);
+			}
+			else
+			{
+				OpenProject(App.StartupProjectPath);
+			}
 		}
 		if (string.IsNullOrWhiteSpace(App.StartupProjectPath) && !_settings.Current.ShowHomeOnStartup)
 		{
 			HomeOverlay.Visibility = Visibility.Collapsed;
 		}
 		RefreshRecent();
-		base.Dispatcher.BeginInvoke(new Action(RefreshMiseVisibleLabels), DispatcherPriority.Loaded);
-		base.Dispatcher.BeginInvoke(new Action(ApplyStartupZoom), DispatcherPriority.Loaded);
+		_ = base.Dispatcher.BeginInvoke(new Action(RefreshMiseVisibleLabels), DispatcherPriority.Loaded);
+		_ = base.Dispatcher.BeginInvoke(new Action(ApplyStartupZoom), DispatcherPriority.Loaded);
 	}
 
 	private void ConfigureAutoSave()
@@ -2614,10 +2648,6 @@ public class MainWindow : Window, IComponentConnector
 		UpdateOverflowClip();
 		foreach (CanvasElementModel model in CurrentPage.Elements.OrderBy((CanvasElementModel x) => x.ZIndex))
 		{
-			model.WidthMm = Math.Clamp(model.WidthMm, 1.0, Math.Max(1.0, CurrentPage.WidthMm));
-			model.HeightMm = Math.Clamp(model.HeightMm, 1.0, Math.Max(1.0, CurrentPage.HeightMm));
-			model.Xmm = Math.Clamp(model.Xmm, 0.0, Math.Max(0.0, CurrentPage.WidthMm - model.WidthMm));
-			model.Ymm = Math.Clamp(model.Ymm, 0.0, Math.Max(0.0, CurrentPage.HeightMm - model.HeightMm));
 			FrameworkElement visual = BuildVisual(model, inverted: false);
 			DesignerItem designerItem = new DesignerItem(model, visual)
 			{
@@ -2627,7 +2657,8 @@ public class MainWindow : Window, IComponentConnector
 				Visibility = ((!model.IsVisible || (_isolatedIds != null && !_isolatedIds.Contains(model.Id))) ? Visibility.Collapsed : Visibility.Visible),
 				RenderTransformOrigin = new Point(0.5, 0.5),
 				RenderTransform = CreateElementTransform(model),
-				SnapPosition = SnapPosition
+				SnapPosition = SnapPosition,
+				DisplayZoom = _zoom
 			};
 			Canvas.SetLeft(designerItem, model.Xmm * 3.7795275590551185);
 			Canvas.SetTop(designerItem, model.Ymm * 3.7795275590551185);
@@ -2644,6 +2675,8 @@ public class MainWindow : Window, IComponentConnector
 			designerItem.ResizePreview += delegate
 			{
 				AutoScrollDuringObjectDrag();
+				UpdatePropertyPanel();
+				UpdateStatus();
 			};
 			designerItem.InteractionCanceled += DesignerItem_InteractionCanceled;
 			designerItem.VisualBoundsChanged += delegate
@@ -2663,12 +2696,6 @@ public class MainWindow : Window, IComponentConnector
 			designerItem.ContextMenu = BuildObjectContextMenu(model);
 			designerItem.ModelChanged += delegate
 			{
-				// Normalize committed bounds so a resize or restored project cannot
-				// leave elements at negative coordinates or beyond the page.
-				model.WidthMm = Math.Clamp(model.WidthMm, 1.0, Math.Max(1.0, CurrentPage.WidthMm));
-				model.HeightMm = Math.Clamp(model.HeightMm, 1.0, Math.Max(1.0, CurrentPage.HeightMm));
-				model.Xmm = Math.Clamp(model.Xmm, 0.0, Math.Max(0.0, CurrentPage.WidthMm - model.WidthMm));
-				model.Ymm = Math.Clamp(model.Ymm, 0.0, Math.Max(0.0, CurrentPage.HeightMm - model.HeightMm));
 				MarkDirty();
 				UpdatePropertyPanel();
 				UpdateStatus();
@@ -2676,6 +2703,10 @@ public class MainWindow : Window, IComponentConnector
 			designerItem.ChangeCompleted += delegate
 			{
 				EndLightweightPreview();
+				if (model.Kind == ElementKind.Text && model.TextFrameTight)
+				{
+					RefreshTextVisual(model);
+				}
 				NormalizeZ();
 				RefreshLayers();
 				UpdateValidationCount();
@@ -3038,12 +3069,13 @@ public class MainWindow : Window, IComponentConnector
 
 	private void PasteStyleToSelection()
 	{
-		if (_copiedStyle == null || _selectedIds.Count == 0)
+		List<CanvasElementModel> editable = EditableSelectedElements();
+		if (_copiedStyle == null || editable.Count == 0)
 		{
 			return;
 		}
 		PushUndo();
-		foreach (CanvasElementModel item in CurrentPage.Elements.Where((CanvasElementModel x) => _selectedIds.Contains(x.Id)))
+		foreach (CanvasElementModel item in editable)
 		{
 			item.Opacity = _copiedStyle.Opacity;
 			if (item.Kind == ElementKind.Text && _copiedStyle.Kind == ElementKind.Text)
@@ -3111,8 +3143,7 @@ public class MainWindow : Window, IComponentConnector
 			value2.Width = (double.IsNaN(value.Width) ? value.ActualWidth : value.Width);
 			value2.Height = (double.IsNaN(value.Height) ? value.ActualHeight : value.Height);
 			value2.Opacity = value.Opacity;
-			bool outside = num < 0.0 || num2 < 0.0 || num + value2.Width > OverflowCanvas.Width || num2 + value2.Height > OverflowCanvas.Height;
-			value2.Visibility = (value.Visibility == Visibility.Visible && outside) ? Visibility.Visible : Visibility.Collapsed;
+			value2.Visibility = value.Visibility;
 			value2.RenderTransformOrigin = value.RenderTransformOrigin;
 			value2.RenderTransform = CreateElementTransform(value.Model);
 			Panel.SetZIndex(value2, Panel.GetZIndex(value));
@@ -3151,7 +3182,7 @@ public class MainWindow : Window, IComponentConnector
 		return new Border
 		{
 			Background = (inverted ? DisplayBrush(model.TextBackground, Brushes.Transparent, inverted: true) : TextureCatalogService.Blend(DisplayBrush(model.TextBackground, Brushes.Transparent, inverted: false), model.TextureDataBase64, model.TextureOpacity, model.TextureScale)),
-			Padding = new Thickness(2.0),
+			Padding = model.TextFrameTight ? new Thickness(0.0) : new Thickness(2.0),
 			Child = new OutlinedTextVisual(model, ResolveFontFamily(model.FontFamily), DisplayBrush(model.TextColor, Brushes.Black, inverted), DisplayBrush(model.TextOutlineColor, Brushes.White, inverted), DisplayBrush(model.TextExtrusionColor, Brushes.DimGray, inverted)),
 			ClipToBounds = false
 		};
@@ -3905,10 +3936,15 @@ public class MainWindow : Window, IComponentConnector
 			if (e.Additive && _selectedIds.Contains(designerItem.Model.Id))
 			{
 				_selectedIds.Remove(designerItem.Model.Id);
+				if (_activeElementId == designerItem.Model.Id)
+				{
+					_activeElementId = null;
+				}
 			}
 			else
 			{
 				_selectedIds.Add(designerItem.Model.Id);
+				_activeElementId = designerItem.Model.Id;
 			}
 			UpdateSelectionVisuals();
 		}
@@ -3926,7 +3962,7 @@ public class MainWindow : Window, IComponentConnector
 		{
 			return;
 		}
-		foreach (KeyValuePair<Guid, DesignerItem> item in _visuals.Where((KeyValuePair<Guid, DesignerItem> x) => _selectedIds.Contains(x.Key) && x.Key != leader.Model.Id))
+		foreach (KeyValuePair<Guid, DesignerItem> item in _visuals.Where((KeyValuePair<Guid, DesignerItem> x) => _selectedIds.Contains(x.Key) && x.Key != leader.Model.Id && !x.Value.Model.IsLocked))
 		{
 			double num = Canvas.GetLeft(item.Value);
 			if (double.IsNaN(num))
@@ -4046,7 +4082,7 @@ public class MainWindow : Window, IComponentConnector
 	private void QuickColor_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null)
+		if (activeElement == null || RejectLockedMutation(activeElement, "色を変更"))
 		{
 			return;
 		}
@@ -4062,7 +4098,7 @@ public class MainWindow : Window, IComponentConnector
 			return;
 		}
 		PushUndo();
-		foreach (CanvasElementModel item in CurrentPage.Elements.Where((CanvasElementModel x) => _selectedIds.Contains(x.Id)))
+		foreach (CanvasElementModel item in EditableSelectedElements())
 		{
 			if (item.Kind == ElementKind.Text)
 			{
@@ -4170,7 +4206,7 @@ public class MainWindow : Window, IComponentConnector
 					_overlapDragOrigins.Clear();
 					foreach (Guid selectedId in _selectedIds)
 					{
-						if (_visuals.TryGetValue(selectedId, out DesignerItem value))
+						if (_visuals.TryGetValue(selectedId, out DesignerItem value) && !value.Model.IsLocked)
 						{
 							double left = Canvas.GetLeft(value);
 							double top = Canvas.GetTop(value);
@@ -4521,6 +4557,12 @@ public class MainWindow : Window, IComponentConnector
 	{
 		try
 		{
+			CanvasElementModel selectedElement = ActiveElement;
+			if (selectedElement != null && RejectLockedMutation(selectedElement, "スポイト色を適用"))
+			{
+				ReturnToSelectionMode("ロック中の要素には色を適用できません");
+				return;
+			}
 			int num = Math.Max(1, (int)Math.Ceiling(PageCanvas.ActualWidth));
 			int num2 = Math.Max(1, (int)Math.Ceiling(PageCanvas.ActualHeight));
 			int x = Math.Clamp((int)point.X, 0, num - 1);
@@ -4535,7 +4577,7 @@ public class MainWindow : Window, IComponentConnector
 			int value3 = ((b == 0) ? array[0] : Math.Clamp(array[0] * 255 / b, 0, 255));
 			string text = $"#FF{value:X2}{value2:X2}{value3:X2}";
 			PushUndo();
-			CanvasElementModel activeElement = ActiveElement;
+			CanvasElementModel activeElement = selectedElement;
 			if (activeElement != null)
 			{
 				if (activeElement.Kind == ElementKind.Text)
@@ -4585,6 +4627,7 @@ public class MainWindow : Window, IComponentConnector
 		{
 			_selectedIds.Clear();
 			_selectedIds.Add(canvasElementModel.Id);
+			_activeElementId = canvasElementModel.Id;
 			UpdateSelectionVisuals();
 		}
 	}
@@ -4700,11 +4743,16 @@ public class MainWindow : Window, IComponentConnector
 
 	private void UpdateValidationCount()
 	{
-		List<ValidationIssue> source = _validator.Validate(CurrentPage);
+		List<ValidationIssue> source = ValidateCurrentPage();
 		int num = source.Count((ValidationIssue x) => x.Severity == IssueSeverity.Error);
 		int num2 = source.Count((ValidationIssue x) => x.Severity == IssueSeverity.Warning);
 		ErrorCountText.Text = ((num + num2 == 0) ? "チェック: 問題なし" : $"チェック: 赤{num} / 黄{num2}");
 		ErrorCountText.Foreground = ((num > 0) ? Brushes.Firebrick : ((num2 > 0) ? Brushes.DarkOrange : Brushes.ForestGreen));
+	}
+
+	private List<ValidationIssue> ValidateCurrentPage()
+	{
+		return _validator.Validate(CurrentPage, _project.EmbeddedFonts.Select((EmbeddedFontModel font) => font.FamilyName));
 	}
 
 	private void MarkDirty()
@@ -4742,6 +4790,7 @@ public class MainWindow : Window, IComponentConnector
 	{
 		if (_undo.Count != 0)
 		{
+			_liveTextEditingId = null;
 			_redo.Push(CreateSnapshot());
 			ApplySnapshot(_undo.Pop());
 			StatusText.Text = "元に戻しました";
@@ -4752,6 +4801,7 @@ public class MainWindow : Window, IComponentConnector
 	{
 		if (_redo.Count != 0)
 		{
+			_liveTextEditingId = null;
 			_undo.Push(CreateSnapshot());
 			ApplySnapshot(_redo.Pop());
 			StatusText.Text = "やり直しました";
@@ -4773,7 +4823,7 @@ public class MainWindow : Window, IComponentConnector
 		}
 		try
 		{
-			return new ProjectSnapshot(_projectService.Serialize(_project), dictionary);
+			return new ProjectSnapshot(_projectService.Serialize(_project), dictionary, _pageIndex, _selectedIds.ToArray());
 		}
 		finally
 		{
@@ -4822,8 +4872,16 @@ public class MainWindow : Window, IComponentConnector
 			}
 		}
 		ActivateEmbeddedFonts();
-		_pageIndex = Math.Clamp(_pageIndex, 0, _project.Pages.Count - 1);
+		_pageIndex = Math.Clamp(snapshot.PageIndex, 0, _project.Pages.Count - 1);
 		_selectedIds.Clear();
+		HashSet<Guid> availableIds = CurrentPage.Elements.Select((CanvasElementModel element) => element.Id).ToHashSet();
+		foreach (Guid selectedId in snapshot.SelectedIds)
+		{
+			if (availableIds.Contains(selectedId))
+			{
+				_selectedIds.Add(selectedId);
+			}
+		}
 		_dirty = true;
 		RefreshAll();
 	}
@@ -4890,21 +4948,414 @@ public class MainWindow : Window, IComponentConnector
 		}
 	}
 
-	private void OpenProject_Click(object sender, RoutedEventArgs e)
+	private async void OpenProject_Click(object sender, RoutedEventArgs e)
 	{
 		if (ConfirmDiscardOrSave())
 		{
 			OpenFileDialog openFileDialog = new OpenFileDialog
 			{
-				Title = "MISEプロジェクトを開く",
-				Filter = "MISEプロジェクト (*.rcanvas;*.rtemplate)|*.rcanvas;*.rtemplate|すべてのファイル|*.*",
+				Title = "プロジェクト・PDF・AIを開く",
+				Filter = "対応ファイル (*.rcanvas;*.rtemplate;*.pdf;*.ai)|*.rcanvas;*.rtemplate;*.pdf;*.ai|MISEプロジェクト (*.rcanvas;*.rtemplate)|*.rcanvas;*.rtemplate|PDF・Illustrator (*.pdf;*.ai)|*.pdf;*.ai|すべてのファイル|*.*",
 				InitialDirectory = AppPaths.Projects
 			};
 			if (openFileDialog.ShowDialog(this) == true)
 			{
-				OpenProject(openFileDialog.FileName);
+				string extension = System.IO.Path.GetExtension(openFileDialog.FileName);
+				if (extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase) || extension.Equals(".ai", StringComparison.OrdinalIgnoreCase))
+				{
+					await OpenDesignWithPromptAsync(openFileDialog.FileName);
+				}
+				else
+				{
+					OpenProject(openFileDialog.FileName);
+				}
 			}
 		}
+	}
+
+	private async Task OpenDesignWithPromptAsync(string path)
+	{
+		DesignImportOptionsDialog dialog = new DesignImportOptionsDialog(path)
+		{
+			Owner = this
+		};
+		if (dialog.ShowDialog() != true || dialog.Options == null)
+		{
+			return;
+		}
+		await OpenEditableDesignAsync(path, dialog.Options);
+	}
+
+	private async Task OpenEditableDesignAsync(string path, DesignImportOptions options)
+	{
+		try
+		{
+			if (!options.MakeTextEditable && !options.MakeImagesEditable)
+			{
+				await OpenFlattenedDesignAsync(path, options.BackgroundLongSide);
+				return;
+			}
+			StatusText.Text = "PDF／AIを解析中…";
+			EditableDesignDocument document = await EditableDesignImportService.ReadAsync(path);
+			ProjectModel importedProject = new ProjectModel
+			{
+				ProjectId = Guid.NewGuid(),
+				ProjectName = System.IO.Path.GetFileNameWithoutExtension(path) + $"（{options.ModeLabel}）",
+				Purpose = "PDF／AIカスタム読み込み",
+				CreatedAt = DateTime.Now,
+				UpdatedAt = DateTime.Now,
+				Pages = new List<PageModel>()
+			};
+			int textCount = 0;
+			int imageCount = 0;
+			int substitutedFontCount = 0;
+			int preservedMissingFontCount = 0;
+			for (int pageNumber = 0; pageNumber < document.Pages.Count; pageNumber++)
+			{
+				EditableDesignPage sourcePage = document.Pages[pageNumber];
+				StatusText.Text = $"PDF／AIを編集用に変換中… {pageNumber + 1}/{document.Pages.Count}";
+				PdfRenderedPage rendered = await PdfImportService.RenderPageAsync(path, sourcePage.PageIndex, options.BackgroundLongSide);
+				BitmapSource preview = LoadBitmap(rendered.PngBytes);
+				double widthMm = sourcePage.WidthPt * 25.4 / 72.0;
+				double heightMm = sourcePage.HeightPt * 25.4 / 72.0;
+				PageModel page = new PageModel
+				{
+					Name = $"ページ {pageNumber + 1}",
+					WidthMm = widthMm,
+					HeightMm = heightMm,
+					Background = "#FFFFFFFF",
+					SafeMarginMm = _settings.Current.DefaultSafeMarginMm,
+					ShowGrid = _settings.Current.ShowGridOnNewProjects,
+					ShowSafeArea = false,
+					Elements = new List<CanvasElementModel>()
+				};
+				page.Elements.Add(new CanvasElementModel
+				{
+					Kind = ElementKind.Image,
+					Name = $"元デザイン（固定）_{pageNumber + 1}",
+					Xmm = 0.0,
+					Ymm = 0.0,
+					WidthMm = widthMm,
+					HeightMm = heightMm,
+					ZIndex = 0,
+					IsLocked = true,
+					IsDecoration = true,
+					PreserveAspectRatio = true,
+					PdfSourcePath = path,
+					PdfPageIndex = sourcePage.PageIndex,
+					ImageDataBase64 = Convert.ToBase64String(rendered.PngBytes),
+					ImagePixelWidth = preview.PixelWidth,
+					ImagePixelHeight = preview.PixelHeight,
+					ImageSourcePath = path,
+					ImageSourceBytes = new FileInfo(path).Length
+				});
+				(byte[] Pixels, int Stride, int Width, int Height) pixelData = CopyBgraPixels(preview);
+				int zIndex = 1;
+				if (options.MakeImagesEditable)
+				{
+				foreach (EditableImageBlock imageBlock in sourcePage.Images)
+				{
+					try
+					{
+						double leftMm = imageBlock.LeftPt * 25.4 / 72.0;
+						double topMm = (sourcePage.HeightPt - imageBlock.BottomPt - imageBlock.HeightPt) * 25.4 / 72.0;
+						double imageWidthMm = Math.Max(1.0, imageBlock.WidthPt * 25.4 / 72.0);
+						double imageHeightMm = Math.Max(1.0, imageBlock.HeightPt * 25.4 / 72.0);
+						string maskColor = SampleBackgroundColor(pixelData, leftMm, topMm, imageWidthMm, imageHeightMm, widthMm, heightMm);
+						page.Elements.Add(CreateImportMask($"画像跡マスク_{imageCount + 1}", leftMm, topMm, imageWidthMm, imageHeightMm, imageBlock.Rotation, maskColor, zIndex++));
+						BitmapSource extracted = LoadBitmap(imageBlock.Data);
+						page.Elements.Add(new CanvasElementModel
+						{
+							Kind = ElementKind.Image,
+							Name = $"編集画像_{++imageCount}",
+							Xmm = leftMm,
+							Ymm = topMm,
+							WidthMm = imageWidthMm,
+							HeightMm = imageHeightMm,
+							Rotation = imageBlock.Rotation,
+							ZIndex = zIndex++,
+							PreserveAspectRatio = true,
+							ImageDataBase64 = Convert.ToBase64String(imageBlock.Data),
+							ImageOriginalDataBase64 = Convert.ToBase64String(imageBlock.Data),
+							ImagePixelWidth = extracted.PixelWidth,
+							ImagePixelHeight = extracted.PixelHeight,
+							ImageSourcePath = path,
+							ImageSourceBytes = imageBlock.Data.LongLength
+						});
+					}
+					catch (Exception ex)
+					{
+						LogService.Error("PDF image object import failed", ex);
+					}
+				}
+				}
+				if (options.MakeTextEditable)
+				{
+				foreach (EditableTextBlock block in sourcePage.TextBlocks)
+				{
+					double leftMm = block.LeftPt * 25.4 / 72.0;
+					double topMm = (sourcePage.HeightPt - block.BottomPt - block.HeightPt) * 25.4 / 72.0;
+					double textWidthMm = Math.Max(2.0, block.WidthPt * 25.4 / 72.0 + 1.0);
+					double textHeightMm = Math.Max(block.HeightPt * 25.4 / 72.0 + 0.8, block.FontSizePt * 25.4 / 72.0 * 1.35);
+					(string importedFont, bool substituted) = ResolveImportedFont(block.FontName, block.Text);
+					if (substituted && options.PreserveMissingFontText)
+					{
+						preservedMissingFontCount++;
+						continue;
+					}
+					if (substituted)
+					{
+						substitutedFontCount++;
+					}
+					string maskColor = SampleBackgroundColor(pixelData, leftMm, topMm, textWidthMm, textHeightMm, widthMm, heightMm);
+					page.Elements.Add(CreateImportMask($"文字跡マスク_{textCount + 1}", Math.Max(0.0, leftMm - 0.35), Math.Max(0.0, topMm - 0.4), textWidthMm + 0.7, textHeightMm, block.Rotation, maskColor, zIndex++));
+					CanvasElementModel textElement = new CanvasElementModel
+					{
+						Kind = ElementKind.Text,
+						Name = $"編集文字_{++textCount}",
+						Text = block.Text,
+						Xmm = Math.Max(0.0, leftMm),
+						Ymm = Math.Max(0.0, topMm),
+						WidthMm = Math.Min(widthMm - Math.Max(0.0, leftMm - 0.35), textWidthMm + 0.7),
+						HeightMm = Math.Min(heightMm - Math.Max(0.0, topMm - 0.4), textHeightMm),
+						Rotation = block.Rotation,
+						ZIndex = zIndex++,
+						FontFamily = importedFont,
+						FontSizePt = block.FontSizePt,
+						FontWeightValue = block.FontWeight,
+						Bold = block.FontWeight >= 700,
+						Italic = block.IsItalic,
+						TextColor = block.Color,
+						TextBackground = "#00FFFFFF",
+						TextAlignment = "Left",
+						VerticalAlignment = "Top",
+						PreserveAspectRatio = true,
+						TextFrameTight = true
+					};
+					FitTextFrame(textElement, preserveAnchor: false);
+					page.Elements.Add(textElement);
+				}
+				}
+				importedProject.Pages.Add(page);
+			}
+			if (importedProject.Pages.Count == 0)
+			{
+				throw new InvalidDataException("ページが見つかりませんでした。");
+			}
+			_project = importedProject;
+			_project.PaperName = "カスタム";
+			_project.Landscape = _project.Pages[0].WidthMm > _project.Pages[0].HeightMm;
+			_filePath = null;
+			_pageIndex = 0;
+			_dirty = true;
+			_undo.Clear();
+			_redo.Clear();
+			_selectedIds.Clear();
+			HomeOverlay.Visibility = Visibility.Collapsed;
+			RefreshAll();
+			StatusText.Text = $"{document.Pages.Count}ページを開き、文字{textCount}個・画像{imageCount}個を編集可能にしました（{options.ModeLabel}）";
+			if (substitutedFontCount > 0)
+			{
+				MessageBox.Show($"{substitutedFontCount}個の文字で元フォントがPCに見つからなかったため、近い標準フォントへ置換しました。\n\n元の見た目を完全に維持したい場合は、開き直して［見た目優先］を選択してください。", "フォントの置換", MessageBoxButton.OK, MessageBoxImage.Information);
+			}
+			else if (preservedMissingFontCount > 0)
+			{
+				MessageBox.Show($"PCにないフォントを使用している文字{preservedMissingFontCount}個は、設定どおり元の見た目のまま固定背景へ残しました。", "フォントの保持", MessageBoxButton.OK, MessageBoxImage.Information);
+			}
+			else if ((options.MakeTextEditable || options.MakeImagesEditable) && textCount == 0 && imageCount == 0)
+			{
+				MessageBox.Show("ページは開けましたが、編集可能な文字・画像は検出されませんでした。文字がアウトライン化されている場合や、画像が特殊なマスク内にある場合は固定背景として保持されます。", "PDF／AIを開く", MessageBoxButton.OK, MessageBoxImage.Information);
+			}
+		}
+		catch (Exception ex)
+		{
+			LogService.Error("Editable PDF/AI import failed", ex);
+			MessageBox.Show("PDF／AIを編集用に開けませんでした。\n\n" + ex.Message, "PDF／AIを開く", MessageBoxButton.OK, MessageBoxImage.Hand);
+			UpdateStatus();
+		}
+	}
+
+	private async Task OpenFlattenedDesignAsync(string path, int longSide = 5200)
+	{
+		StatusText.Text = "PDF／AIを高精細画像へ変換中…";
+		int pageCount = await PdfImportService.GetPageCountAsync(path);
+		ProjectModel project = new ProjectModel
+		{
+			ProjectId = Guid.NewGuid(),
+			ProjectName = System.IO.Path.GetFileNameWithoutExtension(path) + "（見た目優先）",
+			Purpose = "PDF／AI画像化",
+			CreatedAt = DateTime.Now,
+			UpdatedAt = DateTime.Now,
+			Pages = new List<PageModel>()
+		};
+		for (int index = 0; index < pageCount; index++)
+		{
+			StatusText.Text = $"高精細画像へ変換中… {index + 1}/{pageCount}";
+			PdfRenderedPage rendered = await PdfImportService.RenderPageAsync(path, index, longSide);
+			BitmapSource bitmap = LoadBitmap(rendered.PngBytes);
+			double widthMm = rendered.Width * 25.4 / 96.0;
+			double heightMm = rendered.Height * 25.4 / 96.0;
+			project.Pages.Add(new PageModel
+			{
+				Name = $"ページ {index + 1}",
+				WidthMm = widthMm,
+				HeightMm = heightMm,
+				Background = "#FFFFFFFF",
+				SafeMarginMm = _settings.Current.DefaultSafeMarginMm,
+				ShowGrid = _settings.Current.ShowGridOnNewProjects,
+				ShowSafeArea = false,
+				Elements = new List<CanvasElementModel>
+				{
+					new CanvasElementModel
+					{
+						Kind = ElementKind.Image,
+						Name = $"高精細ページ画像_{index + 1}",
+						Xmm = 0.0,
+						Ymm = 0.0,
+						WidthMm = widthMm,
+						HeightMm = heightMm,
+						ZIndex = 0,
+						PreserveAspectRatio = true,
+						PdfSourcePath = path,
+						PdfPageIndex = index,
+						ImageDataBase64 = Convert.ToBase64String(rendered.PngBytes),
+						ImagePixelWidth = bitmap.PixelWidth,
+						ImagePixelHeight = bitmap.PixelHeight,
+						ImageSourcePath = path,
+						ImageSourceBytes = new FileInfo(path).Length
+					}
+				}
+			});
+		}
+		if (project.Pages.Count == 0)
+		{
+			throw new InvalidDataException("ページが見つかりませんでした。");
+		}
+		_project = project;
+		_project.PaperName = "カスタム";
+		_project.Landscape = _project.Pages[0].WidthMm > _project.Pages[0].HeightMm;
+		_filePath = null;
+		_pageIndex = 0;
+		_dirty = true;
+		_undo.Clear();
+		_redo.Clear();
+		_selectedIds.Clear();
+		HomeOverlay.Visibility = Visibility.Collapsed;
+		RefreshAll();
+		StatusText.Text = $"{pageCount}ページを見た目優先で高精細画像化しました";
+	}
+
+	private static (byte[] Pixels, int Stride, int Width, int Height) CopyBgraPixels(BitmapSource source)
+	{
+		BitmapSource bgra = source.Format == PixelFormats.Bgra32 ? source : new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0.0);
+		int stride = bgra.PixelWidth * 4;
+		byte[] pixels = new byte[stride * bgra.PixelHeight];
+		bgra.CopyPixels(pixels, stride, 0);
+		return (pixels, stride, bgra.PixelWidth, bgra.PixelHeight);
+	}
+
+	private static string SampleBackgroundColor((byte[] Pixels, int Stride, int Width, int Height) data, double xMm, double yMm, double widthMm, double heightMm, double pageWidthMm, double pageHeightMm)
+	{
+		int left = Math.Clamp((int)Math.Round(xMm / Math.Max(0.01, pageWidthMm) * data.Width), 0, data.Width - 1);
+		int top = Math.Clamp((int)Math.Round(yMm / Math.Max(0.01, pageHeightMm) * data.Height), 0, data.Height - 1);
+		int right = Math.Clamp((int)Math.Round((xMm + widthMm) / Math.Max(0.01, pageWidthMm) * data.Width), 0, data.Width - 1);
+		int bottom = Math.Clamp((int)Math.Round((yMm + heightMm) / Math.Max(0.01, pageHeightMm) * data.Height), 0, data.Height - 1);
+		(int X, int Y)[] samples = new (int, int)[8]
+		{
+			(left, top), (right, top), (left, bottom), (right, bottom),
+			((left + right) / 2, top), ((left + right) / 2, bottom), (left, (top + bottom) / 2), (right, (top + bottom) / 2)
+		};
+		int red = 0;
+		int green = 0;
+		int blue = 0;
+		foreach ((int x, int y) in samples)
+		{
+			int index = y * data.Stride + x * 4;
+			blue += data.Pixels[index];
+			green += data.Pixels[index + 1];
+			red += data.Pixels[index + 2];
+		}
+		return $"#FF{red / samples.Length:X2}{green / samples.Length:X2}{blue / samples.Length:X2}";
+	}
+
+	private static CanvasElementModel CreateImportMask(string name, double xMm, double yMm, double widthMm, double heightMm, double rotation, string color, int zIndex)
+	{
+		return new CanvasElementModel
+		{
+			Kind = ElementKind.Shape,
+			Name = name,
+			ShapeType = "Rectangle",
+			Xmm = Math.Max(0.0, xMm),
+			Ymm = Math.Max(0.0, yMm),
+			WidthMm = Math.Max(0.5, widthMm),
+			HeightMm = Math.Max(0.5, heightMm),
+			Rotation = rotation,
+			ZIndex = zIndex,
+			FillColor = color,
+			StrokeColor = "#00FFFFFF",
+			StrokeThicknessPt = 0.0,
+			CornerRadiusMm = 0.0,
+			IsLocked = true,
+			IsDecoration = true,
+			PreserveAspectRatio = false
+		};
+	}
+
+	private (string FontFamily, bool Substituted) ResolveImportedFont(string sourceFont, string text)
+	{
+		_systemFontLookup ??= Fonts.SystemFontFamilies
+			.Select(font => font.Source)
+			.GroupBy(FontLookupKey, StringComparer.OrdinalIgnoreCase)
+			.ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+		string key = FontLookupKey(sourceFont);
+		if (_systemFontLookup.TryGetValue(key, out string exact))
+		{
+			return (exact, false);
+		}
+		Dictionary<string, string> aliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+		{
+			["helvetica"] = "Arial",
+			["arial"] = "Arial",
+			["timesnewroman"] = "Times New Roman",
+			["timesroman"] = "Times New Roman",
+			["courier"] = "Courier New",
+			["kozgo"] = "Yu Gothic UI",
+			["kozmin"] = "Yu Mincho",
+			["notosansjp"] = "Noto Sans JP",
+			["notoserifjp"] = "Noto Serif JP",
+			["yugothic"] = "Yu Gothic UI",
+			["yumincho"] = "Yu Mincho"
+		};
+		foreach (KeyValuePair<string, string> alias in aliases)
+		{
+			if (!key.Contains(alias.Key, StringComparison.OrdinalIgnoreCase))
+			{
+				continue;
+			}
+			string aliasKey = FontLookupKey(alias.Value);
+			if (_systemFontLookup.TryGetValue(aliasKey, out string mapped))
+			{
+				return (mapped, !key.Equals(aliasKey, StringComparison.OrdinalIgnoreCase));
+			}
+		}
+		bool japanese = text.Any(character => character >= '\u3000');
+		string fallback = japanese ? "Yu Gothic UI" : "Arial";
+		return (_systemFontLookup.TryGetValue(FontLookupKey(fallback), out string available) ? available : fallback, true);
+	}
+
+	private static string FontLookupKey(string? value)
+	{
+		if (string.IsNullOrWhiteSpace(value))
+		{
+			return string.Empty;
+		}
+		string key = new string(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+		return key.Replace("bolditalic", string.Empty, StringComparison.OrdinalIgnoreCase)
+			.Replace("bold", string.Empty, StringComparison.OrdinalIgnoreCase)
+			.Replace("italic", string.Empty, StringComparison.OrdinalIgnoreCase)
+			.Replace("oblique", string.Empty, StringComparison.OrdinalIgnoreCase)
+			.Replace("psmt", string.Empty, StringComparison.OrdinalIgnoreCase)
+			.Replace("mt", string.Empty, StringComparison.OrdinalIgnoreCase);
 	}
 
 	private async void OpenProject(string path)
@@ -5116,7 +5567,7 @@ public class MainWindow : Window, IComponentConnector
 
 	private void AddHeading_Click(object sender, RoutedEventArgs e)
 	{
-		AddText("大見出し", "心を動かす、ひとこと。", 28.0, 120.0, 26.0, bold: true);
+		AddText("大見出し", "心を動かす、ひとこと。", 34.0, 120.0, 26.0, bold: true);
 	}
 
 	private void AddSubheading_Click(object sender, RoutedEventArgs e)
@@ -5206,6 +5657,7 @@ public class MainWindow : Window, IComponentConnector
 			FontSizePt = pt,
 			Bold = bold,
 			FontWeightValue = (bold ? 700 : 400),
+			TextFrameTight = true,
 			TextColor = color,
 			WidthMm = widthMm2,
 			HeightMm = heightMm,
@@ -5213,42 +5665,15 @@ public class MainWindow : Window, IComponentConnector
 			Ymm = point.Y,
 			ZIndex = CurrentPage.Elements.Count
 		};
+		FitTextFrame(canvasElementModel, preserveAnchor: false);
+		Point fittedPosition = VisibleInsertionTopLeft(canvasElementModel.WidthMm, canvasElementModel.HeightMm);
+		canvasElementModel.Xmm = fittedPosition.X;
+		canvasElementModel.Ymm = fittedPosition.Y;
 		CurrentPage.Elements.Add(canvasElementModel);
 		SelectOnly(canvasElementModel.Id);
 		MarkDirty();
 		RebuildCanvas();
-		if (canvasElementModel.Kind == ElementKind.Text)
-		{
-			base.Dispatcher.BeginInvoke(new Action(() => FitTextFrameToGlyphBounds(canvasElementModel)), DispatcherPriority.Loaded);
-		}
 		RefreshLayers();
-		UpdatePropertyPanel();
-	}
-
-	private void FitTextFrameToGlyphBounds(CanvasElementModel model)
-	{
-		if (!_visuals.TryGetValue(model.Id, out DesignerItem item) || string.IsNullOrEmpty(model.Text))
-			return;
-		FontWeight weight = FontWeight.FromOpenTypeWeight(Math.Clamp(model.Bold ? Math.Max(700, model.FontWeightValue) : model.FontWeightValue, 100, 900));
-		Typeface typeface = new Typeface(ResolveFontFamily(model.FontFamily), model.Italic ? FontStyles.Italic : FontStyles.Normal, weight, FontStretches.Normal);
-		double dip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
-		double size = Math.Max(1.0, model.FontSizePt * 96.0 / 72.0);
-		string[] lines = model.Text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n');
-		double width = 0.0;
-		double lineHeight = 0.0;
-		foreach (string line in lines)
-		{
-			FormattedText measured = new FormattedText(line, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight, typeface, size, Brushes.Black, dip);
-			width = Math.Max(width, measured.WidthIncludingTrailingWhitespace);
-			lineHeight = Math.Max(lineHeight, measured.Height);
-		}
-		if (width <= 0.0 || lineHeight <= 0.0) return;
-		double height = lineHeight * Math.Max(1, lines.Length);
-		const double pxPerMm = 3.7795275590551185;
-		model.WidthMm = Math.Max(1.0, (width + 2.0) / pxPerMm);
-		model.HeightMm = Math.Max(1.0, (height + 2.0) / pxPerMm);
-		item.Width = width + 2.0;
-		item.Height = height + 2.0;
 		UpdatePropertyPanel();
 	}
 
@@ -5257,8 +5682,8 @@ public class MainWindow : Window, IComponentConnector
 		ReturnToSelectionMode();
 		OpenFileDialog openFileDialog = new OpenFileDialog
 		{
-			Title = "画像またはPDFを選択",
-			Filter = "画像・PDF (*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff;*.webp;*.pdf)|*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff;*.webp;*.pdf|すべてのファイル|*.*",
+			Title = "画像・PDF・AIを選択",
+			Filter = "画像・PDF・AI (*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff;*.webp;*.pdf;*.ai)|*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff;*.webp;*.pdf;*.ai|すべてのファイル|*.*",
 			Multiselect = true
 		};
 		if (openFileDialog.ShowDialog(this) != true)
@@ -5268,7 +5693,8 @@ public class MainWindow : Window, IComponentConnector
 		string[] fileNames = openFileDialog.FileNames;
 		foreach (string path in fileNames)
 		{
-			if (System.IO.Path.GetExtension(path).Equals(".pdf", StringComparison.OrdinalIgnoreCase))
+			string extension = System.IO.Path.GetExtension(path);
+			if (extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase) || extension.Equals(".ai", StringComparison.OrdinalIgnoreCase))
 			{
 				await AddPdfFileAsync(path);
 			}
@@ -5284,8 +5710,8 @@ public class MainWindow : Window, IComponentConnector
 		ReturnToSelectionMode();
 		OpenFileDialog openFileDialog = new OpenFileDialog
 		{
-			Title = "PDFを選択",
-			Filter = "PDF (*.pdf)|*.pdf",
+			Title = "PDFまたはIllustrator AIを選択",
+			Filter = "PDF・Illustrator (*.pdf;*.ai)|*.pdf;*.ai",
 			Multiselect = true
 		};
 		if (openFileDialog.ShowDialog(this) == true)
@@ -5412,7 +5838,7 @@ public class MainWindow : Window, IComponentConnector
 	private void EditImageExtrusion_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement != null && activeElement.Kind == ElementKind.Image)
+		if (activeElement != null && activeElement.Kind == ElementKind.Image && !RejectLockedMutation(activeElement, "画像効果を変更"))
 		{
 			ImageExtrusionDialog imageExtrusionDialog = new ImageExtrusionDialog(activeElement)
 			{
@@ -5435,7 +5861,7 @@ public class MainWindow : Window, IComponentConnector
 	private void EditTransparentImageTrim_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || activeElement.Kind != ElementKind.Image || string.IsNullOrWhiteSpace(activeElement.ImageDataBase64))
+		if (activeElement == null || activeElement.Kind != ElementKind.Image || RejectLockedMutation(activeElement, "透明余白を編集") || string.IsNullOrWhiteSpace(activeElement.ImageDataBase64))
 		{
 			return;
 		}
@@ -5672,31 +6098,58 @@ public class MainWindow : Window, IComponentConnector
 	{
 		_selectedIds.Clear();
 		_selectedIds.Add(id);
+		_activeElementId = id;
+	}
+
+	private List<CanvasElementModel> EditableSelectedElements()
+	{
+		return CurrentPage.Elements.Where((CanvasElementModel element) => _selectedIds.Contains(element.Id) && !element.IsLocked).ToList();
+	}
+
+	private bool RejectLockedMutation(CanvasElementModel? element, string operation)
+	{
+		if (element == null || !element.IsLocked)
+		{
+			return false;
+		}
+		StatusText.Text = $"「{element.Name}」はロック中のため{operation}できません。先にロックを解除してください";
+		return true;
 	}
 
 	private void Delete_Click(object sender, RoutedEventArgs e)
 	{
-		if (_selectedIds.Count != 0)
+		List<CanvasElementModel> editable = EditableSelectedElements();
+		if (editable.Count != 0)
 		{
 			PushUndo();
-			CurrentPage.Elements.RemoveAll((CanvasElementModel x) => _selectedIds.Contains(x.Id));
-			_selectedIds.Clear();
+			HashSet<Guid> editableIds = editable.Select((CanvasElementModel element) => element.Id).ToHashSet();
+			CurrentPage.Elements.RemoveAll((CanvasElementModel x) => editableIds.Contains(x.Id));
+			_selectedIds.RemoveWhere((Guid id) => editableIds.Contains(id));
 			NormalizeZ();
 			MarkDirty();
 			RebuildCanvas();
 			RefreshLayers();
 			UpdatePropertyPanel();
 		}
+		else if (_selectedIds.Count != 0)
+		{
+			StatusText.Text = "選択項目はロック中のため削除できません";
+		}
 	}
 
 	private void Duplicate_Click(object sender, RoutedEventArgs e)
 	{
-		if (_selectedIds.Count == 0)
+		List<CanvasElementModel> editable = EditableSelectedElements();
+		if (editable.Count == 0)
 		{
+			if (_selectedIds.Count != 0)
+			{
+				StatusText.Text = "選択項目はロック中のため複製できません";
+			}
 			return;
 		}
 		PushUndo();
-		List<CanvasElementModel> list = CurrentPage.Elements.Where((CanvasElementModel x) => _selectedIds.Contains(x.Id)).Select(CloneElement).ToList();
+		List<CanvasElementModel> list = editable.Select(CloneElement).ToList();
 		_selectedIds.Clear();
 		foreach (CanvasElementModel item in list)
 		{
@@ -6272,7 +6725,12 @@ public class MainWindow : Window, IComponentConnector
 			SkewXBox.Text = item.SkewX.ToString("0.#");
 			SkewYBox.Text = item.SkewY.ToString("0.#");
 			OpacityBox.Text = (item.Opacity * 100.0).ToString("0");
-			AspectCheck.IsChecked = item.PreserveAspectRatio;
+			bool proportionalOnly = IsProportionalOnly(item);
+			AspectCheck.IsChecked = proportionalOnly || item.PreserveAspectRatio;
+			AspectCheck.IsEnabled = !proportionalOnly;
+			AspectCheck.ToolTip = proportionalOnly
+				? (item.Kind == ElementKind.QrCode ? "QRコードは読取品質を維持するため、常に正方形で連動します。" : "タイトフレーム文字はフォントと外接フレームを同期するため、常に縦横比を維持します。")
+				: "ONでは幅と高さを現在の比率で連動します。";
 			LockCheck.IsChecked = item.IsLocked;
 			VisibleCheck.IsChecked = item.IsVisible;
 			if (item.Kind == ElementKind.Text)
@@ -6373,45 +6831,60 @@ public class MainWindow : Window, IComponentConnector
 			return;
 		}
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || !(sender is FrameworkElement frameworkElement))
+		if (activeElement == null || RejectLockedMutation(activeElement, "プロパティを変更") || !(sender is FrameworkElement frameworkElement))
 		{
 			return;
 		}
-		PushUndo();
+		bool changed = false;
+		void Change(Action action)
+		{
+			if (!changed)
+			{
+				PushUndo();
+				changed = true;
+			}
+			action();
+		}
 		switch (frameworkElement.Tag?.ToString())
 		{
 		case "Name":
-			activeElement.Name = (string.IsNullOrWhiteSpace(NameBox.Text) ? activeElement.Name : NameBox.Text.Trim());
+		{
+			string name = string.IsNullOrWhiteSpace(NameBox.Text) ? activeElement.Name : NameBox.Text.Trim();
+			if (!string.Equals(name, activeElement.Name, StringComparison.Ordinal))
+			{
+				Change(() => activeElement.Name = name);
+			}
 			break;
+		}
 		case "X":
 		{
-			if (TryNumber(XBox.Text, out var value5))
+			if (TryNumber(XBox.Text, out var value5) && Math.Abs(activeElement.Xmm - value5) > 0.000001)
 			{
-				activeElement.Xmm = value5;
+				Change(() => activeElement.Xmm = value5);
 			}
 			break;
 		}
 		case "Y":
 		{
-			if (TryNumber(YBox.Text, out var value7))
+			if (TryNumber(YBox.Text, out var value7) && Math.Abs(activeElement.Ymm - value7) > 0.000001)
 			{
-				activeElement.Ymm = value7;
+				Change(() => activeElement.Ymm = value7);
 			}
 			break;
 		}
 		case "Width":
 		{
-			if (TryNumber(WidthBox.Text, out var value3))
+			if (TryNumber(WidthBox.Text, out var value3) && Math.Abs(activeElement.WidthMm - value3) > 0.000001)
 			{
-				activeElement.WidthMm = Math.Max(1.0, value3);
+				Change(() => ApplyDimensionEdit(activeElement, DimensionAxis.Width, value3));
 			}
 			break;
 		}
 		case "Height":
 		{
-			if (TryNumber(HeightBox.Text, out var value8))
+			if (TryNumber(HeightBox.Text, out var value8) && Math.Abs(activeElement.HeightMm - value8) > 0.000001)
 			{
-				activeElement.HeightMm = Math.Max(1.0, value8);
+				Change(() => ApplyDimensionEdit(activeElement, DimensionAxis.Height, value8));
 			}
 			break;
 		}
@@ -6419,7 +6892,11 @@ public class MainWindow : Window, IComponentConnector
 		{
 			if (TryNumber(RotationBox.Text, out var value6))
 			{
-				activeElement.Rotation = value6 % 360.0;
+				double rotation = (value6 % 360.0 + 360.0) % 360.0;
+				if (Math.Abs(activeElement.Rotation - rotation) > 0.000001)
+				{
+					Change(() => activeElement.Rotation = rotation);
+				}
 			}
 			break;
 		}
@@ -6427,7 +6904,11 @@ public class MainWindow : Window, IComponentConnector
 		{
 			if (TryNumber(SkewXBox.Text, out var value4))
 			{
-				activeElement.SkewX = Math.Clamp(value4, -80.0, 80.0);
+				double skew = Math.Clamp(value4, -80.0, 80.0);
+				if (Math.Abs(activeElement.SkewX - skew) > 0.000001)
+				{
+					Change(() => activeElement.SkewX = skew);
+				}
 			}
 			break;
 		}
@@ -6435,7 +6916,11 @@ public class MainWindow : Window, IComponentConnector
 		{
 			if (TryNumber(SkewYBox.Text, out var value2))
 			{
-				activeElement.SkewY = Math.Clamp(value2, -80.0, 80.0);
+				double skew = Math.Clamp(value2, -80.0, 80.0);
+				if (Math.Abs(activeElement.SkewY - skew) > 0.000001)
+				{
+					Change(() => activeElement.SkewY = skew);
+				}
 			}
 			break;
 		}
@@ -6443,17 +6928,67 @@ public class MainWindow : Window, IComponentConnector
 		{
 			if (TryNumber(OpacityBox.Text, out var value))
 			{
-				activeElement.Opacity = Math.Clamp(value / 100.0, 0.0, 1.0);
+				double opacity = Math.Clamp(value / 100.0, 0.0, 1.0);
+				if (Math.Abs(activeElement.Opacity - opacity) > 0.000001)
+				{
+					Change(() => activeElement.Opacity = opacity);
+				}
 			}
 			break;
 		}
+		}
+		if (!changed)
+		{
+			UpdatePropertyPanel();
+			return;
 		}
 		MarkDirty();
 		RebuildCanvas();
 		RefreshLayers();
 		UpdatePropertyPanel();
 		UpdateValidationCount();
-		_generalPropertyUndoCaptured = false;
+	}
+
+	private static bool IsProportionalOnly(CanvasElementModel element)
+	{
+		return element.Kind == ElementKind.QrCode || (element.Kind == ElementKind.Text && element.TextFrameTight);
+	}
+
+	private void ApplyDimensionEdit(CanvasElementModel element, DimensionAxis axis, double requestedValue)
+	{
+		double minimum = element.Kind == ElementKind.QrCode ? DimensionMath.QrMinimumMm : (element.Kind == ElementKind.Text && element.TextFrameTight ? 0.1 : DimensionMath.GeneralMinimumMm);
+		if (element.Kind == ElementKind.QrCode)
+		{
+			double side = Math.Max(minimum, requestedValue);
+			element.WidthMm = side;
+			element.HeightMm = side;
+			element.PreserveAspectRatio = true;
+			return;
+		}
+
+		bool preserveAspect = element.PreserveAspectRatio || IsProportionalOnly(element);
+		DimensionResult result = DimensionMath.Apply(element.WidthMm, element.HeightMm, requestedValue, axis, preserveAspect, minimum, minimum);
+		if (element.Kind == ElementKind.Text && element.TextFrameTight)
+		{
+			double scale = DimensionMath.ClampTextScale(element.FontSizePt, result.UniformScale);
+			ScaleTightText(element, scale);
+			FitTextFrame(element, preserveAnchor: false);
+			element.PreserveAspectRatio = true;
+			return;
+		}
+
+		element.WidthMm = result.Width;
+		element.HeightMm = result.Height;
+	}
+
+	private static void ScaleTightText(CanvasElementModel element, double scale)
+	{
+		element.FontSizePt = Math.Clamp(element.FontSizePt * scale, 3.0, 300.0);
+		element.CharacterSpacing = Math.Clamp(element.CharacterSpacing * scale, -100.0, 300.0);
+		element.LineSpacingPt = Math.Clamp(element.LineSpacingPt * scale, -100.0, 300.0);
+		element.LineHeight = Math.Max(0.0, element.LineHeight * scale);
+		element.TextOutlineThicknessPt = Math.Clamp(element.TextOutlineThicknessPt * scale, 0.0, 24.0);
+		element.TextExtrusionDepthPt = Math.Clamp(element.TextExtrusionDepthPt * scale, 0.0, 48.0);
 	}
 
 	private void CheckProperty_Click(object sender, RoutedEventArgs e)
@@ -6465,11 +7000,39 @@ public class MainWindow : Window, IComponentConnector
 		CanvasElementModel activeElement = ActiveElement;
 		if (activeElement != null && sender is CheckBox checkBox)
 		{
+			string property = checkBox.Tag?.ToString() ?? string.Empty;
+			if (activeElement.IsLocked && property != "Lock")
+			{
+				RejectLockedMutation(activeElement, "プロパティを変更");
+				UpdatePropertyPanel();
+				return;
+			}
+			bool requested = checkBox.IsChecked == true;
+			bool current = property switch
+			{
+				"Aspect" => IsProportionalOnly(activeElement) || activeElement.PreserveAspectRatio,
+				"Lock" => activeElement.IsLocked,
+				"Visible" => activeElement.IsVisible,
+				_ => requested
+			};
+			if (current == requested || (property == "Aspect" && IsProportionalOnly(activeElement)))
+			{
+				UpdatePropertyPanel();
+				return;
+			}
 			PushUndo();
-			switch (checkBox.Tag?.ToString())
+			switch (property)
 			{
 			case "Aspect":
-				activeElement.PreserveAspectRatio = checkBox.IsChecked == true;
+				if (IsProportionalOnly(activeElement))
+				{
+					activeElement.PreserveAspectRatio = true;
+					checkBox.IsChecked = true;
+				}
+				else
+				{
+					activeElement.PreserveAspectRatio = checkBox.IsChecked == true;
+				}
 				break;
 			case "Lock":
 				activeElement.IsLocked = checkBox.IsChecked == true;
@@ -6485,6 +7048,90 @@ public class MainWindow : Window, IComponentConnector
 		}
 	}
 
+	private void TextContentBox_TextChanged(object sender, TextChangedEventArgs e)
+	{
+		if (_updatingProperties)
+		{
+			return;
+		}
+		CanvasElementModel activeElement = ActiveElement;
+		if (activeElement == null || activeElement.Kind != ElementKind.Text || activeElement.IsLocked)
+		{
+			_liveTextEditingId = null;
+			return;
+		}
+		if (_liveTextEditingId != activeElement.Id)
+		{
+			PushUndo();
+			_liveTextEditingId = activeElement.Id;
+		}
+		string text = TextContentBox.Text ?? string.Empty;
+		if (activeElement.Text == text)
+		{
+			return;
+		}
+		activeElement.Text = text;
+		FitTextFrame(activeElement);
+		MarkDirty();
+		RefreshTextVisual(activeElement);
+	}
+
+	private void TextContentBox_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+	{
+		_liveTextEditingId = null;
+		UpdateValidationCount();
+	}
+
+	private void RefreshTextVisual(CanvasElementModel element)
+	{
+		if (_visuals.TryGetValue(element.Id, out DesignerItem designerItem))
+		{
+			designerItem.Width = Math.Max(4.0, element.WidthMm * 3.7795275590551185);
+			designerItem.Height = Math.Max(4.0, element.HeightMm * 3.7795275590551185);
+			Canvas.SetLeft(designerItem, element.Xmm * 3.7795275590551185);
+			Canvas.SetTop(designerItem, element.Ymm * 3.7795275590551185);
+			designerItem.ReplaceVisual(BuildVisual(element, inverted: false));
+		}
+		if (_overflowVisuals.TryGetValue(element.Id, out FrameworkElement overflow) && overflow is ContentControl contentControl)
+		{
+			contentControl.Content = BuildVisual(element, inverted: true);
+		}
+		SyncOverflowVisual(element.Id);
+	}
+
+	private void FitTextFrame(CanvasElementModel element, bool preserveAnchor = true)
+	{
+		if (element.Kind != ElementKind.Text || !element.TextFrameTight)
+		{
+			return;
+		}
+		double oldWidth = element.WidthMm;
+		double oldHeight = element.HeightMm;
+		double oldCenterX = element.Xmm + oldWidth / 2.0;
+		double oldCenterY = element.Ymm + oldHeight / 2.0;
+		double oldRight = element.Xmm + oldWidth;
+		double oldBottom = element.Ymm + oldHeight;
+		Size measured = OutlinedTextVisual.MeasureTightSize(element, ResolveFontFamily(element.FontFamily));
+		element.WidthMm = measured.Width * 25.4 / 96.0;
+		element.HeightMm = measured.Height * 25.4 / 96.0;
+		if (!preserveAnchor)
+		{
+			return;
+		}
+		element.Xmm = element.TextAlignment switch
+		{
+			"Right" => oldRight - element.WidthMm,
+			"Center" => oldCenterX - element.WidthMm / 2.0,
+			_ => element.Xmm
+		};
+		element.Ymm = element.VerticalAlignment switch
+		{
+			"Bottom" => oldBottom - element.HeightMm,
+			"Center" => oldCenterY - element.HeightMm / 2.0,
+			_ => element.Ymm
+		};
+	}
+
 	private void TextProperty_LostFocus(object sender, RoutedEventArgs e)
 	{
 		if (_updatingProperties)
@@ -6492,21 +7139,24 @@ public class MainWindow : Window, IComponentConnector
 			return;
 		}
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || activeElement.Kind != ElementKind.Text || !(sender is FrameworkElement frameworkElement))
+		if (activeElement == null || activeElement.Kind != ElementKind.Text || RejectLockedMutation(activeElement, "文字設定を変更") || !(sender is FrameworkElement frameworkElement))
 		{
+			return;
+		}
+		if (frameworkElement.Tag?.ToString() == "Text")
+		{
+			_liveTextEditingId = null;
+			UpdateValidationCount();
 			return;
 		}
 		PushUndo();
 		switch (frameworkElement.Tag?.ToString())
 		{
-		case "Text":
-			activeElement.Text = TextContentBox.Text;
-			break;
 		case "FontSize":
 		{
 			if (TryNumber(FontSizeBox.Text, out var value6))
 			{
-				activeElement.FontSizePt = Math.Clamp(value6, 1.0, 300.0);
+				activeElement.FontSizePt = Math.Clamp(value6, 3.0, 300.0);
 			}
 			break;
 		}
@@ -6575,80 +7225,17 @@ public class MainWindow : Window, IComponentConnector
 			break;
 		}
 		}
+		FitTextFrame(activeElement);
 		MarkDirty();
 		RebuildCanvas();
 		UpdatePropertyPanel();
-		UpdateValidationCount();
-		if (string.Equals(frameworkElement.Tag?.ToString(), "FontSize", StringComparison.Ordinal))
-		{
-			base.Dispatcher.BeginInvoke(new Action(() => FitTextFrameToGlyphBounds(activeElement)), DispatcherPriority.Loaded);
-		}
-		if (string.Equals(frameworkElement.Tag?.ToString(), "Text", StringComparison.Ordinal))
-		{
-			_textContentUndoCaptured = false;
-		}
-	}
-
-	private void TextContentBox_TextChanged(object sender, TextChangedEventArgs e)
-	{
-		if (_updatingProperties || ActiveElement is not { Kind: ElementKind.Text } activeElement)
-		{
-			return;
-		}
-		if (!_textContentUndoCaptured)
-		{
-			PushUndo();
-			_textContentUndoCaptured = true;
-		}
-		activeElement.Text = TextContentBox.Text;
-		MarkDirty();
-		RebuildCanvas();
-		UpdateValidationCount();
-		_generalPropertyUndoCaptured = false;
-	}
-
-	private void GeneralProperty_TextChanged(object sender, TextChangedEventArgs e)
-	{
-		if (_updatingProperties || ActiveElement is not CanvasElementModel activeElement || sender is not FrameworkElement field)
-		{
-			return;
-		}
-		string tag = field.Tag?.ToString() ?? string.Empty;
-		if (!new[] { "X", "Y", "SkewX", "SkewY", "Width", "Height", "Rotation", "Opacity" }.Contains(tag))
-		{
-			return;
-		}
-		if (!_generalPropertyUndoCaptured)
-		{
-			PushUndo();
-			_generalPropertyUndoCaptured = true;
-		}
-		if (!TryNumber(((TextBox)field).Text, out double value))
-		{
-			return;
-		}
-		switch (tag)
-		{
-		case "X": activeElement.Xmm = value; break;
-		case "Y": activeElement.Ymm = value; break;
-		case "SkewX": activeElement.SkewX = Math.Clamp(value, -80.0, 80.0); break;
-		case "SkewY": activeElement.SkewY = Math.Clamp(value, -80.0, 80.0); break;
-		case "Width": activeElement.WidthMm = Math.Max(1.0, value); break;
-		case "Height": activeElement.HeightMm = Math.Max(1.0, value); break;
-		case "Rotation": activeElement.Rotation = (value % 360.0 + 360.0) % 360.0; break;
-		case "Opacity": activeElement.Opacity = Math.Clamp(value / 100.0, 0.0, 1.0); break;
-		}
-		MarkDirty();
-		RebuildCanvas();
-		RefreshLayers();
-		UpdateStatus();
 		UpdateValidationCount();
 	}
 
 	private void TextColorPicker_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement != null && activeElement.Kind == ElementKind.Text)
+		if (activeElement != null && activeElement.Kind == ElementKind.Text && !RejectLockedMutation(activeElement, "文字色を変更"))
 		{
 			string text = ShowProjectColor(activeElement.TextColor);
 			if (text != null)
@@ -6666,7 +7253,7 @@ public class MainWindow : Window, IComponentConnector
 	private void TextEffectColorPicker_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || activeElement.Kind != ElementKind.Text || !(sender is FrameworkElement { Tag: var tag }))
+		if (activeElement == null || activeElement.Kind != ElementKind.Text || RejectLockedMutation(activeElement, "文字効果を変更") || !(sender is FrameworkElement { Tag: var tag }))
 		{
 			return;
 		}
@@ -6703,7 +7290,7 @@ public class MainWindow : Window, IComponentConnector
 	private void TextBackgroundTransparent_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement != null && activeElement.Kind == ElementKind.Text)
+		if (activeElement != null && activeElement.Kind == ElementKind.Text && !RejectLockedMutation(activeElement, "文字背景を変更"))
 		{
 			PushUndo();
 			activeElement.TextBackground = "#00FFFFFF";
@@ -6814,6 +7401,7 @@ public class MainWindow : Window, IComponentConnector
 			if (activeElement != null && activeElement.Kind == ElementKind.Text)
 			{
 				activeElement.FontFamily = list[0];
+				FitTextFrame(activeElement);
 				FontCombo.Text = list[0];
 				RebuildCanvas();
 				UpdatePropertyPanel();
@@ -6829,11 +7417,12 @@ public class MainWindow : Window, IComponentConnector
 			return;
 		}
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement != null && activeElement.Kind == ElementKind.Text && !string.IsNullOrWhiteSpace(FontCombo.SelectedItem?.ToString()))
+		if (activeElement != null && activeElement.Kind == ElementKind.Text && !activeElement.IsLocked && !string.IsNullOrWhiteSpace(FontCombo.SelectedItem?.ToString()))
 		{
 			string font = FontCombo.SelectedItem.ToString();
 			PushUndo();
 			activeElement.FontFamily = font;
+			FitTextFrame(activeElement);
 			_settings.Current.RecentFonts.RemoveAll((string x) => string.Equals(x, font, StringComparison.OrdinalIgnoreCase));
 			_settings.Current.RecentFonts.Insert(0, font);
 			if (_settings.Current.RecentFonts.Count > 12)
@@ -6876,7 +7465,7 @@ public class MainWindow : Window, IComponentConnector
 			return;
 		}
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement != null && activeElement.Kind == ElementKind.Text && sender is ToggleButton toggleButton)
+		if (activeElement != null && activeElement.Kind == ElementKind.Text && !RejectLockedMutation(activeElement, "文字装飾を変更") && sender is ToggleButton toggleButton)
 		{
 			PushUndo();
 			switch (toggleButton.Tag?.ToString())
@@ -6892,6 +7481,7 @@ public class MainWindow : Window, IComponentConnector
 				activeElement.Underline = toggleButton.IsChecked == true;
 				break;
 			}
+			FitTextFrame(activeElement);
 			MarkDirty();
 			RebuildCanvas();
 			UpdatePropertyPanel();
@@ -6901,7 +7491,7 @@ public class MainWindow : Window, IComponentConnector
 	private void TextAlign_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement != null && activeElement.Kind == ElementKind.Text && sender is FrameworkElement frameworkElement)
+		if (activeElement != null && activeElement.Kind == ElementKind.Text && !RejectLockedMutation(activeElement, "文字揃えを変更") && sender is FrameworkElement frameworkElement)
 		{
 			PushUndo();
 			activeElement.TextAlignment = frameworkElement.Tag?.ToString() ?? "Center";
@@ -6917,7 +7507,7 @@ public class MainWindow : Window, IComponentConnector
 			return;
 		}
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || activeElement.Kind != ElementKind.Shape || !(sender is FrameworkElement frameworkElement))
+		if (activeElement == null || activeElement.Kind != ElementKind.Shape || RejectLockedMutation(activeElement, "図形設定を変更") || !(sender is FrameworkElement frameworkElement))
 		{
 			return;
 		}
@@ -7033,7 +7623,7 @@ public class MainWindow : Window, IComponentConnector
 	private void ShapeColorPicker_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || activeElement.Kind != ElementKind.Shape || !(sender is FrameworkElement { Tag: var tag }))
+		if (activeElement == null || activeElement.Kind != ElementKind.Shape || RejectLockedMutation(activeElement, "図形色を変更") || !(sender is FrameworkElement { Tag: var tag }))
 		{
 			return;
 		}
@@ -7065,7 +7655,7 @@ public class MainWindow : Window, IComponentConnector
 	private void EditShapePoints_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || activeElement.Kind != ElementKind.Shape)
+		if (activeElement == null || activeElement.Kind != ElementKind.Shape || RejectLockedMutation(activeElement, "頂点を編集"))
 		{
 			return;
 		}
@@ -7102,7 +7692,7 @@ public class MainWindow : Window, IComponentConnector
 	private void EditCorners_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement != null && activeElement.Kind == ElementKind.Shape)
+		if (activeElement != null && activeElement.Kind == ElementKind.Shape && !RejectLockedMutation(activeElement, "角を編集"))
 		{
 			CornerEditorDialog cornerEditorDialog = new CornerEditorDialog(activeElement)
 			{
@@ -7126,7 +7716,7 @@ public class MainWindow : Window, IComponentConnector
 	private void EditPanelDividers_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || activeElement.Kind != ElementKind.Shape || activeElement.ShapeType == "Line")
+		if (activeElement == null || activeElement.Kind != ElementKind.Shape || RejectLockedMutation(activeElement, "分割線を編集") || activeElement.ShapeType == "Line")
 		{
 			MessageBox.Show("線以外の図形を選択してください。", "パネル分割線");
 			return;
@@ -7166,7 +7756,7 @@ public class MainWindow : Window, IComponentConnector
 	private void EditPanelCellColors_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || activeElement.Kind != ElementKind.Shape || !IsPanelElement(activeElement))
+		if (activeElement == null || activeElement.Kind != ElementKind.Shape || RejectLockedMutation(activeElement, "区画色を変更") || !IsPanelElement(activeElement))
 		{
 			MessageBox.Show("パネル図形を選択してください。", "区画ごとの色");
 			return;
@@ -7189,7 +7779,7 @@ public class MainWindow : Window, IComponentConnector
 	private void EditElementTexture_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null)
+		if (activeElement == null || RejectLockedMutation(activeElement, "テクスチャを変更"))
 		{
 			return;
 		}
@@ -7202,7 +7792,7 @@ public class MainWindow : Window, IComponentConnector
 			return;
 		}
 		PushUndo();
-		foreach (CanvasElementModel item in CurrentPage.Elements.Where((CanvasElementModel x) => _selectedIds.Contains(x.Id)))
+		foreach (CanvasElementModel item in EditableSelectedElements())
 		{
 			item.TextureName = texturePickerDialog.TextureName;
 			item.TextureDataBase64 = texturePickerDialog.TextureDataBase64;
@@ -7240,7 +7830,7 @@ public class MainWindow : Window, IComponentConnector
 			return;
 		}
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || activeElement.Kind != ElementKind.QrCode || !(sender is FrameworkElement frameworkElement))
+		if (activeElement == null || activeElement.Kind != ElementKind.QrCode || RejectLockedMutation(activeElement, "QR設定を変更") || !(sender is FrameworkElement frameworkElement))
 		{
 			return;
 		}
@@ -7272,7 +7862,7 @@ public class MainWindow : Window, IComponentConnector
 	private void QrColorPicker_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || activeElement.Kind != ElementKind.QrCode || !(sender is FrameworkElement { Tag: var tag }))
+		if (activeElement == null || activeElement.Kind != ElementKind.QrCode || RejectLockedMutation(activeElement, "QR色を変更") || !(sender is FrameworkElement { Tag: var tag }))
 		{
 			return;
 		}
@@ -7301,7 +7891,7 @@ public class MainWindow : Window, IComponentConnector
 		if (!_updatingProperties)
 		{
 			CanvasElementModel activeElement = ActiveElement;
-			if (activeElement != null && activeElement.Kind == ElementKind.QrCode && QrLevelCombo.SelectedItem is ComboBoxItem comboBoxItem)
+			if (activeElement != null && activeElement.Kind == ElementKind.QrCode && !activeElement.IsLocked && QrLevelCombo.SelectedItem is ComboBoxItem comboBoxItem)
 			{
 				PushUndo();
 				activeElement.QrErrorCorrection = comboBoxItem.Content?.ToString() ?? "M";
@@ -7321,7 +7911,7 @@ public class MainWindow : Window, IComponentConnector
 	private void ReplaceImage_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || activeElement.Kind != ElementKind.Image)
+		if (activeElement == null || activeElement.Kind != ElementKind.Image || RejectLockedMutation(activeElement, "画像を差し替え"))
 		{
 			return;
 		}
@@ -7363,7 +7953,7 @@ public class MainWindow : Window, IComponentConnector
 	private void RemoveImageBackground_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement == null || activeElement.Kind != ElementKind.Image)
+		if (activeElement == null || activeElement.Kind != ElementKind.Image || RejectLockedMutation(activeElement, "画像背景を編集"))
 		{
 			return;
 		}
@@ -7412,7 +8002,7 @@ public class MainWindow : Window, IComponentConnector
 	private void ResetImageCutout_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement != null && activeElement.Kind == ElementKind.Image && !string.IsNullOrWhiteSpace(activeElement.ImageOriginalDataBase64))
+		if (activeElement != null && activeElement.Kind == ElementKind.Image && !RejectLockedMutation(activeElement, "画像背景を復元") && !string.IsNullOrWhiteSpace(activeElement.ImageOriginalDataBase64))
 		{
 			PushUndo();
 			activeElement.ImageDataBase64 = activeElement.ImageOriginalDataBase64;
@@ -7427,7 +8017,7 @@ public class MainWindow : Window, IComponentConnector
 	private void ResetImageRatio_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel activeElement = ActiveElement;
-		if (activeElement != null && activeElement.Kind == ElementKind.Image && activeElement.ImagePixelWidth > 0 && activeElement.ImagePixelHeight > 0)
+		if (activeElement != null && activeElement.Kind == ElementKind.Image && !RejectLockedMutation(activeElement, "画像比率を変更") && activeElement.ImagePixelWidth > 0 && activeElement.ImagePixelHeight > 0)
 		{
 			PushUndo();
 			activeElement.HeightMm = activeElement.WidthMm * (double)activeElement.ImagePixelHeight / (double)activeElement.ImagePixelWidth;
@@ -7468,7 +8058,7 @@ public class MainWindow : Window, IComponentConnector
 
 	private void Align_Click(object sender, RoutedEventArgs e)
 	{
-		List<CanvasElementModel> list = CurrentPage.Elements.Where((CanvasElementModel x) => _selectedIds.Contains(x.Id)).ToList();
+		List<CanvasElementModel> list = EditableSelectedElements();
 		if (list.Count == 0 || !(sender is FrameworkElement frameworkElement))
 		{
 			return;
@@ -7525,7 +8115,7 @@ public class MainWindow : Window, IComponentConnector
 	private void LayerOrder_Click(object sender, RoutedEventArgs e)
 	{
 		CanvasElementModel active = ActiveElement;
-		if (active == null || !(sender is FrameworkElement frameworkElement))
+		if (active == null || RejectLockedMutation(active, "レイヤー順を変更") || !(sender is FrameworkElement frameworkElement))
 		{
 			return;
 		}
@@ -7592,7 +8182,7 @@ public class MainWindow : Window, IComponentConnector
 
 	private void Validate_Click(object sender, RoutedEventArgs e)
 	{
-		ValidationDialog validationDialog = new ValidationDialog(_validator.Validate(CurrentPage))
+		ValidationDialog validationDialog = new ValidationDialog(ValidateCurrentPage())
 		{
 			Owner = this
 		};
@@ -7616,7 +8206,7 @@ public class MainWindow : Window, IComponentConnector
 			StatusText.Text = "書き出し・印刷処理が進行中です";
 			return;
 		}
-		List<ValidationIssue> source = _validator.Validate(CurrentPage);
+		List<ValidationIssue> source = ValidateCurrentPage();
 		if (_settings.Current.WarnBeforeExportOnErrors && source.Any((ValidationIssue x) => x.Severity == IssueSeverity.Error) && MessageBox.Show("赤色のエラーが残っています。内容を確認せずに書き出しますか？", "書き出し前チェック", MessageBoxButton.YesNo, MessageBoxImage.Exclamation) != MessageBoxResult.Yes)
 		{
 			Validate_Click(sender, e);
@@ -8252,7 +8842,7 @@ public class MainWindow : Window, IComponentConnector
 
 	private ImpositionOutput BuildImposition(ImpositionDialogResult options, int dpi)
 	{
-		RenderTargetBitmap imageSource = RenderCurrentPage(180, transparent: false);
+		RenderTargetBitmap imageSource = RenderCurrentPage(dpi, transparent: false);
 		PaperSizeDefinition paperSizeDefinition = PaperCatalog.Get(options.PaperName);
 		double num = (options.Landscape ? paperSizeDefinition.HeightMm : paperSizeDefinition.WidthMm);
 		double num2 = (options.Landscape ? paperSizeDefinition.WidthMm : paperSizeDefinition.HeightMm);
@@ -8677,7 +9267,7 @@ public class MainWindow : Window, IComponentConnector
 
 	private void About_Click(object sender, RoutedEventArgs e)
 	{
-		MessageBox.Show("MISE（マイズ） 1.1.12\n\nWindows向け販促物作成ソフト\n\n© 2026 MISE", "MISEについて", MessageBoxButton.OK, MessageBoxImage.Asterisk);
+		MessageBox.Show("MISE（マイズ） 1.1.20\n\nWindows向け販促物作成ソフト\n\n© 2026 MISE", "MISEについて", MessageBoxButton.OK, MessageBoxImage.Asterisk);
 	}
 
 	private void ZoomSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -8695,6 +9285,10 @@ public class MainWindow : Window, IComponentConnector
 		OverflowCanvas.LayoutTransform = Transform.Identity;
 		GuideOverlayCanvas.LayoutTransform = Transform.Identity;
 		CanvasOuter.LayoutTransform = new ScaleTransform(_zoom, _zoom);
+		foreach (DesignerItem designerItem in _visuals.Values)
+		{
+			designerItem.DisplayZoom = _zoom;
+		}
 		ZoomText.Text = $"{_zoom * 100.0:0}%";
 		if (Math.Abs(ZoomSlider.Value - _zoom * 100.0) > 0.1)
 		{
@@ -9000,6 +9594,27 @@ public class MainWindow : Window, IComponentConnector
 			}
 			return;
 		}
+		bool controlPressed = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
+		bool altPressed = Keyboard.Modifiers.HasFlag(ModifierKeys.Alt);
+		if (controlPressed && !altPressed && e.Key == Key.Z)
+		{
+			if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
+			{
+				Redo_Click(sender, e);
+			}
+			else
+			{
+				Undo_Click(sender, e);
+			}
+			e.Handled = true;
+			return;
+		}
+		if (controlPressed && !altPressed && e.Key == Key.Y)
+		{
+			Redo_Click(sender, e);
+			e.Handled = true;
+			return;
+		}
 		if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control) && e.Key == Key.K)
 		{
 			ShowCommandPalette();
@@ -9146,14 +9761,6 @@ public class MainWindow : Window, IComponentConnector
 					e.Handled = true;
 				}
 				return;
-			case Key.Z:
-				Undo_Click(sender, e);
-				e.Handled = true;
-				return;
-			case Key.Y:
-				Redo_Click(sender, e);
-				e.Handled = true;
-				return;
 			case Key.C:
 				Copy_Click(sender, e);
 				e.Handled = true;
@@ -9207,9 +9814,16 @@ public class MainWindow : Window, IComponentConnector
 		{
 			return;
 		}
+		List<CanvasElementModel> keyboardMoveTargets = EditableSelectedElements();
+		if (keyboardMoveTargets.Count == 0)
+		{
+			StatusText.Text = "選択項目はロック中のため移動できません";
+			e.Handled = true;
+			return;
+		}
 		PushUndo();
 		double num5 = (flag4 ? 10.0 : 1.0);
-		foreach (CanvasElementModel item2 in CurrentPage.Elements.Where((CanvasElementModel x) => _selectedIds.Contains(x.Id) && !x.IsLocked))
+		foreach (CanvasElementModel item2 in keyboardMoveTargets)
 		{
 			if (e.Key == Key.Left)
 			{
@@ -9313,6 +9927,11 @@ public class MainWindow : Window, IComponentConnector
 				else if (System.IO.Path.GetExtension(text).Equals(".pdf", StringComparison.OrdinalIgnoreCase))
 				{
 					await AddPdfFileAsync(text);
+				}
+				else if (System.IO.Path.GetExtension(text).Equals(".ai", StringComparison.OrdinalIgnoreCase) && ConfirmDiscardOrSave())
+				{
+					await OpenDesignWithPromptAsync(text);
+					break;
 				}
 			}
 		}
@@ -9805,42 +10424,34 @@ public class MainWindow : Window, IComponentConnector
 			break;
 		case 134:
 			XBox = (TextBox)target;
-			XBox.TextChanged += GeneralProperty_TextChanged;
 			XBox.LostFocus += GeneralProperty_LostFocus;
 			break;
 		case 135:
 			YBox = (TextBox)target;
-			YBox.TextChanged += GeneralProperty_TextChanged;
 			YBox.LostFocus += GeneralProperty_LostFocus;
 			break;
 		case 136:
 			SkewXBox = (TextBox)target;
-			SkewXBox.TextChanged += GeneralProperty_TextChanged;
 			SkewXBox.LostFocus += GeneralProperty_LostFocus;
 			break;
 		case 137:
 			SkewYBox = (TextBox)target;
-			SkewYBox.TextChanged += GeneralProperty_TextChanged;
 			SkewYBox.LostFocus += GeneralProperty_LostFocus;
 			break;
 		case 138:
 			WidthBox = (TextBox)target;
-			WidthBox.TextChanged += GeneralProperty_TextChanged;
 			WidthBox.LostFocus += GeneralProperty_LostFocus;
 			break;
 		case 139:
 			HeightBox = (TextBox)target;
-			HeightBox.TextChanged += GeneralProperty_TextChanged;
 			HeightBox.LostFocus += GeneralProperty_LostFocus;
 			break;
 		case 140:
 			RotationBox = (TextBox)target;
-			RotationBox.TextChanged += GeneralProperty_TextChanged;
 			RotationBox.LostFocus += GeneralProperty_LostFocus;
 			break;
 		case 141:
 			OpacityBox = (TextBox)target;
-			OpacityBox.TextChanged += GeneralProperty_TextChanged;
 			OpacityBox.LostFocus += GeneralProperty_LostFocus;
 			break;
 		case 142:
@@ -9860,7 +10471,6 @@ public class MainWindow : Window, IComponentConnector
 			break;
 		case 146:
 			TextContentBox = (TextBox)target;
-			TextContentBox.TextChanged += TextContentBox_TextChanged;
 			TextContentBox.LostFocus += TextProperty_LostFocus;
 			break;
 		case 147:

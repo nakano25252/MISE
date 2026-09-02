@@ -11,7 +11,7 @@ public static class ExportService
 	{
 		using PdfDocument pdfDocument = new PdfDocument();
 		pdfDocument.Info.Title = Path.GetFileNameWithoutExtension(path);
-		pdfDocument.Info.Creator = "MISE 1.1.12";
+		pdfDocument.Info.Creator = "MISE " + AppInfo.Version;
 		foreach (RenderedPage page in pages)
 		{
 			PdfPage pdfPage = pdfDocument.AddPage();

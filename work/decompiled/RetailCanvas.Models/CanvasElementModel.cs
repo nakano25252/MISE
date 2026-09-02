@@ -80,6 +80,8 @@ public sealed class CanvasElementModel
 
 	public double CharacterSpacing { get; set; }
 
+	public bool TextFrameTight { get; set; }
+
 	public string ShapeType { get; set; } = "Rectangle";
 
 	public string LineStyle { get; set; } = "実線";
@@ -207,11 +209,13 @@ public sealed class CanvasElementModel
 	{
 		get
 		{
-			if (Kind != ElementKind.Image || !(WidthMm > 0.0))
+			if (Kind != ElementKind.Image || !(WidthMm > 0.0) || !(HeightMm > 0.0) || ImagePixelWidth <= 0 || ImagePixelHeight <= 0)
 			{
 				return 0.0;
 			}
-			return (double)ImagePixelWidth / (WidthMm / 25.4);
+			double widthDpi = (double)ImagePixelWidth / (WidthMm / 25.4);
+			double heightDpi = (double)ImagePixelHeight / (HeightMm / 25.4);
+			return Math.Min(widthDpi, heightDpi);
 		}
 	}
 }

@@ -38,7 +38,7 @@ public sealed class HelpDialog : Window
 			FontSize = 13.0,
 			LineHeight = 22.0
 		};
-		textBlock.Inlines.Add(new Run("MISE 1.1.12 操作ガイド\n")
+		textBlock.Inlines.Add(new Run("MISE 1.1.20 操作ガイド\n")
 		{
 			FontSize = 24.0,
 			FontWeight = FontWeights.Bold,

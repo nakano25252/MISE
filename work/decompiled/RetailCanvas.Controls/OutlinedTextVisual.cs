@@ -36,17 +36,61 @@ public sealed class OutlinedTextVisual : FrameworkElement
 		_outline = outline;
 		_extrusion = extrusion;
 		base.SnapsToDevicePixels = false;
-		base.UseLayoutRounding = false;
-		TextOptions.SetTextFormattingMode(this, TextFormattingMode.Display);
 		base.IsHitTestVisible = false;
+	}
+
+	public static Size MeasureTightSize(CanvasElementModel model, FontFamily fontFamily)
+	{
+		OutlinedTextVisual visual = new OutlinedTextVisual(model, fontFamily, Brushes.Black, Brushes.Black, Brushes.Black);
+		FontStyle style = model.Italic ? FontStyles.Italic : FontStyles.Normal;
+		int weightValue = Math.Clamp(model.FontWeightValue, 100, 900);
+		if (model.Bold && weightValue < 700)
+		{
+			weightValue = 700;
+		}
+		Typeface typeface = new Typeface(fontFamily, style, FontWeight.FromOpenTypeWeight(weightValue), FontStretches.Normal);
+		double fontSizeDip = Math.Max(1.0, model.FontSizePt * 96.0 / 72.0);
+		double pixelsPerDip = 1.0;
+		double characterSpacingDip = Math.Clamp(model.CharacterSpacing, -100.0, 300.0) * 96.0 / 72.0;
+		double lineSpacingDip = Math.Clamp(model.LineSpacingPt, -100.0, 300.0) * 96.0 / 72.0;
+		Geometry geometry;
+		if (string.IsNullOrEmpty(model.Text))
+		{
+			FormattedText placeholder = visual.CreateFormattedText("Agあ", typeface, fontSizeDip, pixelsPerDip);
+			geometry = placeholder.BuildGeometry(new Point(0.0, 0.0));
+		}
+		else if (Math.Abs(characterSpacingDip) < 0.01)
+		{
+			FormattedText formattedText = visual.CreateFormattedText(model.Text, typeface, fontSizeDip, pixelsPerDip);
+			formattedText.MaxTextWidth = 100000.0;
+			formattedText.MaxTextHeight = 100000.0;
+			formattedText.Trimming = TextTrimming.None;
+			if (Math.Abs(lineSpacingDip) >= 0.01)
+			{
+				formattedText.LineHeight = Math.Max(fontSizeDip * 0.35, visual.MeasureDefaultLineHeight(typeface, fontSizeDip, pixelsPerDip) + lineSpacingDip);
+			}
+			else if (model.LineHeight > 0.0)
+			{
+				formattedText.LineHeight = model.LineHeight * 96.0 / 72.0;
+			}
+			if (model.Underline)
+			{
+				formattedText.SetTextDecorations(TextDecorations.Underline);
+			}
+			geometry = formattedText.BuildGeometry(new Point(0.0, 0.0));
+		}
+		else
+		{
+			geometry = visual.BuildSpacedTextGeometry(typeface, fontSizeDip, pixelsPerDip, 100000.0, 100000.0, characterSpacingDip, lineSpacingDip, TextAlignment.Left, VerticalAlignment.Top);
+		}
+		Rect bounds = GetEffectBounds(geometry, model);
+		return new Size(Math.Max(12.0, bounds.Width + 2.0), Math.Max(12.0, bounds.Height + 2.0));
 	}
 
 	protected override void OnRender(DrawingContext dc)
 	{
 		base.OnRender(dc);
-		// Keep rendering at very small font sizes; a 2px guard caused 1–2pt
-		// text to disappear even though the element itself was valid.
-		if (string.IsNullOrEmpty(_model.Text) || base.ActualWidth < 0.25 || base.ActualHeight < 0.25)
+		if (string.IsNullOrEmpty(_model.Text) || base.ActualWidth < 2.0 || base.ActualHeight < 2.0)
 		{
 			return;
 		}
@@ -58,16 +102,15 @@ public sealed class OutlinedTextVisual : FrameworkElement
 		}
 		FontWeight weight = FontWeight.FromOpenTypeWeight(num);
 		Typeface typeface = new Typeface(_fontFamily, style, weight, FontStretches.Normal);
-		// At the editor's minimum zoom, a 1pt glyph would rasterize below one
-		// screen pixel. Keep a small but visible preview floor.
-		double num2 = Math.Max(4.0, _model.FontSizePt * 96.0 / 72.0);
+		double num2 = Math.Max(1.0, _model.FontSizePt * 96.0 / 72.0);
 		double pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
-		double maxTextWidth = Math.Max(1.0, base.ActualWidth);
-		double num3 = Math.Max(1.0, base.ActualHeight);
+		bool tightFrame = _model.TextFrameTight;
+		double maxTextWidth = tightFrame ? 100000.0 : Math.Max(1.0, base.ActualWidth - 4.0);
+		double num3 = tightFrame ? 100000.0 : Math.Max(1.0, base.ActualHeight - 4.0);
 		TextAlignment result;
-		TextAlignment textAlignment = (Enum.TryParse<TextAlignment>(_model.TextAlignment, out result) ? result : TextAlignment.Center);
+		TextAlignment textAlignment = tightFrame ? TextAlignment.Left : (Enum.TryParse<TextAlignment>(_model.TextAlignment, out result) ? result : TextAlignment.Center);
 		VerticalAlignment result2;
-		VerticalAlignment vertical = ((!Enum.TryParse<VerticalAlignment>(_model.VerticalAlignment, out result2)) ? VerticalAlignment.Center : result2);
+		VerticalAlignment vertical = tightFrame ? VerticalAlignment.Top : ((!Enum.TryParse<VerticalAlignment>(_model.VerticalAlignment, out result2)) ? VerticalAlignment.Center : result2);
 		double num4 = Math.Clamp(_model.CharacterSpacing, -100.0, 300.0) * 96.0 / 72.0;
 		double num5 = Math.Clamp(_model.LineSpacingPt, -100.0, 300.0) * 96.0 / 72.0;
 		Geometry geometry;
@@ -92,13 +135,28 @@ public sealed class OutlinedTextVisual : FrameworkElement
 				formattedText.SetTextDecorations(TextDecorations.Underline);
 			}
 			double y = ResolveVerticalOrigin(vertical, formattedText.Height, num3);
-			geometry = formattedText.BuildGeometry(new Point(0.0, y));
+			geometry = formattedText.BuildGeometry(new Point(tightFrame ? 0.0 : 2.0, tightFrame ? 0.0 : y));
 		}
 		else
 		{
 			geometry = BuildSpacedTextGeometry(typeface, num2, pixelsPerDip, maxTextWidth, num3, num4, num5, textAlignment, vertical);
 		}
 		geometry.Freeze();
+		bool normalized = false;
+		if (tightFrame)
+		{
+			Rect effectBounds = GetEffectBounds(geometry, _model);
+			double scaleX = Math.Max(0.01, (base.ActualWidth - 2.0) / Math.Max(0.01, effectBounds.Width));
+			double scaleY = Math.Max(0.01, (base.ActualHeight - 2.0) / Math.Max(0.01, effectBounds.Height));
+			double scale = Math.Min(scaleX, scaleY);
+			double fittedWidth = effectBounds.Width * scale;
+			double fittedHeight = effectBounds.Height * scale;
+			double offsetX = 1.0 + Math.Max(0.0, (base.ActualWidth - 2.0 - fittedWidth) / 2.0) - effectBounds.Left * scale;
+			double offsetY = 1.0 + Math.Max(0.0, (base.ActualHeight - 2.0 - fittedHeight) / 2.0) - effectBounds.Top * scale;
+			Matrix fitMatrix = new Matrix(scale, 0.0, 0.0, scale, offsetX, offsetY);
+			dc.PushTransform(new MatrixTransform(fitMatrix));
+			normalized = true;
+		}
 		double num7 = Math.Clamp(_model.TextOutlineThicknessPt, 0.0, 24.0) * 96.0 / 72.0;
 		Pen pen = null;
 		if (num7 > 0.01)
@@ -145,6 +203,39 @@ public sealed class OutlinedTextVisual : FrameworkElement
 			dc.DrawGeometry(null, pen, geometry);
 		}
 		dc.DrawGeometry(_face, null, geometry);
+		if (normalized)
+		{
+			dc.Pop();
+		}
+	}
+
+	private static Rect GetEffectBounds(Geometry geometry, CanvasElementModel model)
+	{
+		Rect bounds = geometry.Bounds;
+		double outline = Math.Clamp(model.TextOutlineThicknessPt, 0.0, 24.0) * 96.0 / 72.0;
+		double outlineExpansion = model.TextOutlinePosition switch
+		{
+			"内側" => 0.0,
+			"中央" => outline / 2.0,
+			_ => outline
+		};
+		if (outlineExpansion > 0.0)
+		{
+			bounds.Inflate(outlineExpansion, outlineExpansion);
+		}
+		double depth = Math.Clamp(model.TextExtrusionDepthPt, 0.0, 48.0) * 96.0 / 72.0;
+		if (depth > 0.0)
+		{
+			double angle = model.TextExtrusionAngle * Math.PI / 180.0;
+			Rect extrusion = geometry.Bounds;
+			if (model.TextExtrudeOutline && outline > 0.0)
+			{
+				extrusion.Inflate(outline, outline);
+			}
+			extrusion.Offset(Math.Cos(angle) * depth, Math.Sin(angle) * depth);
+			bounds.Union(extrusion);
+		}
+		return bounds;
 	}
 
 	private FormattedText CreateFormattedText(string value, Typeface typeface, double fontSizeDip, double pixelsPerDip)
@@ -192,9 +283,9 @@ public sealed class OutlinedTextVisual : FrameworkElement
 			SpacedLine spacedLine = list[i];
 			double num5 = alignment switch
 			{
-				TextAlignment.Right => Math.Max(0.0, maxTextWidth - spacedLine.Width), 
-				TextAlignment.Center => Math.Max(0.0, (maxTextWidth - spacedLine.Width) / 2.0), 
-				_ => 0.0, 
+				TextAlignment.Right => 2.0 + Math.Max(0.0, maxTextWidth - spacedLine.Width), 
+				TextAlignment.Center => 2.0 + Math.Max(0.0, (maxTextWidth - spacedLine.Width) / 2.0), 
+				_ => 2.0, 
 			};
 			double y = num4 + (double)i * num2;
 			foreach (SpacedGlyph glyph in spacedLine.Glyphs)
