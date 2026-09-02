@@ -22,9 +22,9 @@
     <AssemblyName>RetailCanvas</AssemblyName>
     <RootNamespace>RetailCanvas</RootNamespace>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
-    <Version>1.1.19</Version>
-    <FileVersion>1.1.19.0</FileVersion>
-    <AssemblyVersion>1.1.19.0</AssemblyVersion>
+    <Version>1.1.20</Version>
+    <FileVersion>1.1.20.0</FileVersion>
+    <AssemblyVersion>1.1.20.0</AssemblyVersion>
     <Product>MISE</Product>
     <Company>MISE</Company>
   </PropertyGroup>
