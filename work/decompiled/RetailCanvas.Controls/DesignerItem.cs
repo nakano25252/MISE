@@ -359,8 +359,8 @@ public sealed class DesignerItem : ContentControl
 			if (Model.Kind == ElementKind.Text && Model.TextFrameTight)
 			{
 				double minimumTextScale = (_resizeStartFontSizePt > 0.0) ? Math.Min(1.0, 3.0 / _resizeStartFontSizePt) : 1.0;
-				minimumWidth = Math.Max(1.0, _resizeStartRect.Width * minimumTextScale);
-				minimumHeight = Math.Max(1.0, _resizeStartRect.Height * minimumTextScale);
+				minimumWidth = Math.Max(0.0001, _resizeStartRect.Width * minimumTextScale);
+				minimumHeight = Math.Max(0.0001, _resizeStartRect.Height * minimumTextScale);
 			}
 			Rect rect = CalculateResizeRect(_resizeStartRect, _resizeDirection, dx, dy, preserveAspect, minimumWidth, minimumHeight);
 			if (Model.Kind == ElementKind.Text && Model.TextFrameTight)
@@ -397,7 +397,7 @@ public sealed class DesignerItem : ContentControl
 			{
 				num2 = 0.0;
 			}
-			double minimumStartSize = (Model.Kind == ElementKind.Text && Model.TextFrameTight) ? 1.0 : ((Model.Kind == ElementKind.QrCode ? DimensionMath.QrMinimumMm : DimensionMath.GeneralMinimumMm) * 96.0 / 25.4);
+			double minimumStartSize = (Model.Kind == ElementKind.Text && Model.TextFrameTight) ? 0.0001 : ((Model.Kind == ElementKind.QrCode ? DimensionMath.QrMinimumMm : DimensionMath.GeneralMinimumMm) * 96.0 / 25.4);
 			_resizeStartRect = new Rect(num, num2, Math.Max(minimumStartSize, base.ActualWidth), Math.Max(minimumStartSize, base.ActualHeight));
 			_resizeStartFontSizePt = Model.FontSizePt;
 			_resizeStartCharacterSpacing = Model.CharacterSpacing;
@@ -482,7 +482,7 @@ public sealed class DesignerItem : ContentControl
 		Model.Ymm = num2 * 25.4 / 96.0;
 		double val = (double.IsNaN(base.Width) ? base.ActualWidth : base.Width);
 		double val2 = (double.IsNaN(base.Height) ? base.ActualHeight : base.Height);
-		double minimumCommittedSize = (Model.Kind == ElementKind.Text && Model.TextFrameTight) ? 1.0 : ((Model.Kind == ElementKind.QrCode ? DimensionMath.QrMinimumMm : DimensionMath.GeneralMinimumMm) * 96.0 / 25.4);
+		double minimumCommittedSize = (Model.Kind == ElementKind.Text && Model.TextFrameTight) ? 0.0001 : ((Model.Kind == ElementKind.QrCode ? DimensionMath.QrMinimumMm : DimensionMath.GeneralMinimumMm) * 96.0 / 25.4);
 		Model.WidthMm = Math.Max(minimumCommittedSize, val) * 25.4 / 96.0;
 		Model.HeightMm = Math.Max(minimumCommittedSize, val2) * 25.4 / 96.0;
 	}

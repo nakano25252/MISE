@@ -2651,8 +2651,8 @@ public class MainWindow : Window, IComponentConnector
 			FrameworkElement visual = BuildVisual(model, inverted: false);
 			DesignerItem designerItem = new DesignerItem(model, visual)
 			{
-				Width = Math.Max(4.0, model.WidthMm * 3.7795275590551185),
-				Height = Math.Max(4.0, model.HeightMm * 3.7795275590551185),
+				Width = Math.Max(0.0001, model.WidthMm * 3.7795275590551185),
+				Height = Math.Max(0.0001, model.HeightMm * 3.7795275590551185),
 				Opacity = Math.Clamp(model.Opacity, 0.0, 1.0),
 				Visibility = ((!model.IsVisible || (_isolatedIds != null && !_isolatedIds.Contains(model.Id))) ? Visibility.Collapsed : Visibility.Visible),
 				RenderTransformOrigin = new Point(0.5, 0.5),
@@ -7098,8 +7098,8 @@ public class MainWindow : Window, IComponentConnector
 	{
 		if (_visuals.TryGetValue(element.Id, out DesignerItem designerItem))
 		{
-			designerItem.Width = Math.Max(4.0, element.WidthMm * 3.7795275590551185);
-			designerItem.Height = Math.Max(4.0, element.HeightMm * 3.7795275590551185);
+			designerItem.Width = Math.Max(0.0001, element.WidthMm * 3.7795275590551185);
+			designerItem.Height = Math.Max(0.0001, element.HeightMm * 3.7795275590551185);
 			Canvas.SetLeft(designerItem, element.Xmm * 3.7795275590551185);
 			Canvas.SetTop(designerItem, element.Ymm * 3.7795275590551185);
 			designerItem.ReplaceVisual(BuildVisual(element, inverted: false));
@@ -8411,8 +8411,8 @@ public class MainWindow : Window, IComponentConnector
 			ContentControl contentControl = new ContentControl
 			{
 				Content = BuildVisual(canvasElementModel, inverted: false),
-				Width = Math.Max(4.0, canvasElementModel.WidthMm * 3.7795275590551185),
-				Height = Math.Max(4.0, canvasElementModel.HeightMm * 3.7795275590551185),
+				Width = Math.Max(0.0001, canvasElementModel.WidthMm * 3.7795275590551185),
+				Height = Math.Max(0.0001, canvasElementModel.HeightMm * 3.7795275590551185),
 				Opacity = Math.Clamp(canvasElementModel.Opacity, 0.0, 1.0),
 				HorizontalContentAlignment = HorizontalAlignment.Stretch,
 				VerticalContentAlignment = VerticalAlignment.Stretch,

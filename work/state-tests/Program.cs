@@ -2,6 +2,7 @@ using RetailCanvas.Models;
 using RetailCanvas.Services;
 
 var service = new ProjectService();
+TextRenderingTests.Run();
 var project = new ProjectModel();
 project.Pages.Clear();
 for (int i = 0; i < 4; i++)

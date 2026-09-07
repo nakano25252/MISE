@@ -84,13 +84,14 @@ public sealed class OutlinedTextVisual : FrameworkElement
 			geometry = visual.BuildSpacedTextGeometry(typeface, fontSizeDip, pixelsPerDip, 100000.0, 100000.0, characterSpacingDip, lineSpacingDip, TextAlignment.Left, VerticalAlignment.Top);
 		}
 		Rect bounds = GetEffectBounds(geometry, model);
-		return new Size(Math.Max(12.0, bounds.Width + 2.0), Math.Max(12.0, bounds.Height + 2.0));
+		if (bounds.IsEmpty) return new Size(fontSizeDip, fontSizeDip);
+		return new Size(Math.Max(0.0001, bounds.Width), Math.Max(0.0001, bounds.Height));
 	}
 
 	protected override void OnRender(DrawingContext dc)
 	{
 		base.OnRender(dc);
-		if (string.IsNullOrEmpty(_model.Text) || base.ActualWidth < 2.0 || base.ActualHeight < 2.0)
+		if (string.IsNullOrEmpty(_model.Text) || base.ActualWidth <= 0.0 || base.ActualHeight <= 0.0)
 		{
 			return;
 		}
@@ -146,13 +147,14 @@ public sealed class OutlinedTextVisual : FrameworkElement
 		if (tightFrame)
 		{
 			Rect effectBounds = GetEffectBounds(geometry, _model);
-			double scaleX = Math.Max(0.01, (base.ActualWidth - 2.0) / Math.Max(0.01, effectBounds.Width));
-			double scaleY = Math.Max(0.01, (base.ActualHeight - 2.0) / Math.Max(0.01, effectBounds.Height));
+			if (effectBounds.IsEmpty) return;
+			double scaleX = base.ActualWidth / Math.Max(0.0001, effectBounds.Width);
+			double scaleY = base.ActualHeight / Math.Max(0.0001, effectBounds.Height);
 			double scale = Math.Min(scaleX, scaleY);
 			double fittedWidth = effectBounds.Width * scale;
 			double fittedHeight = effectBounds.Height * scale;
-			double offsetX = 1.0 + Math.Max(0.0, (base.ActualWidth - 2.0 - fittedWidth) / 2.0) - effectBounds.Left * scale;
-			double offsetY = 1.0 + Math.Max(0.0, (base.ActualHeight - 2.0 - fittedHeight) / 2.0) - effectBounds.Top * scale;
+			double offsetX = Math.Max(0.0, (base.ActualWidth - fittedWidth) / 2.0) - effectBounds.Left * scale;
+			double offsetY = Math.Max(0.0, (base.ActualHeight - fittedHeight) / 2.0) - effectBounds.Top * scale;
 			Matrix fitMatrix = new Matrix(scale, 0.0, 0.0, scale, offsetX, offsetY);
 			dc.PushTransform(new MatrixTransform(fitMatrix));
 			normalized = true;
