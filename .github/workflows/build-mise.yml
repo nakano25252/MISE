@@ -1,6 +1,7 @@
 name: Build MISE Windows EXE
 
 on:
+  pull_request:
   push:
     branches:
       - "codex/mise-*"
@@ -28,6 +29,9 @@ jobs:
       - name: Run resize and transform tests
         run: dotnet run --project work/resize-tests/ResizeTests.csproj --configuration Release
 
+      - name: Run state and four-page regression tests
+        run: dotnet run --project work/state-tests/StateTests.csproj --configuration Release
+
       - name: Build with warnings treated as errors
         run: dotnet build work/decompiled/RetailCanvas.csproj --configuration Release --no-restore -p:TreatWarningsAsErrors=true
 
@@ -36,12 +40,12 @@ jobs:
 
       - name: Rename release executable
         shell: pwsh
-        run: Move-Item dist/RetailCanvas.exe dist/MISE_1.1.20.exe
+        run: Move-Item dist/RetailCanvas.exe dist/MISE_1.1.21.exe
 
       - name: Upload Windows executable
         uses: actions/upload-artifact@v4
         with:
-          name: MISE_1.1.20_Windows_x64
-          path: dist/MISE_1.1.20.exe
+          name: MISE_1.1.21_Windows_x64
+          path: dist/MISE_1.1.21.exe
           if-no-files-found: error
           retention-days: 30

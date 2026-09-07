@@ -4,7 +4,7 @@ public static class AppInfo
 {
 	public const string ProductName = "MISE";
 
-	public const string Version = "1.1.20";
+	public const string Version = "1.1.21";
 
 	public const string ReleaseDate = "2026/09/02";
 

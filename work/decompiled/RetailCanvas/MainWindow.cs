@@ -39,7 +39,7 @@ public class MainWindow : Window, IComponentConnector
 
 	private sealed record ImageSnapshot(string? DataBase64, string? OriginalDataBase64, string? PreTrimDataBase64);
 
-	private sealed record ProjectSnapshot(string Json, Dictionary<Guid, ImageSnapshot> Images, int PageIndex, Guid[] SelectedIds);
+	private sealed record ProjectSnapshot(string Json, Dictionary<Guid, ImageSnapshot> Images, int PageIndex, Guid[] SelectedIds, Guid? ActiveElementId);
 
 	private sealed record SnapCandidate(double Offset, double Guide, string Label);
 
@@ -437,7 +437,7 @@ public class MainWindow : Window, IComponentConnector
 		ApplyMiseBranding();
 		PageCanvas.ContextMenu = BuildCanvasContextMenu();
 		WindowSizing.AttachMainWindow(this, _settings.Current);
-		VersionText.Text = "MISE 1.1.20";
+		VersionText.Text = "MISE 1.1.21";
 		RefreshFontList();
 		TemplateCombo.ItemsSource = _templates.BuiltInNames.Concat(_templates.UserTemplates()).ToList();
 		TemplateCombo.SelectedIndex = 0;
@@ -476,7 +476,7 @@ public class MainWindow : Window, IComponentConnector
 					{
 						textBlock.Text = "M";
 					}
-					border.ToolTip = "MISE（マイズ） 1.1.20";
+					border.ToolTip = "MISE（マイズ） 1.1.21";
 					border.Margin = new Thickness(3.0, 0.0, 8.0, 0.0);
 				}
 				foreach (TextBlock item in stackPanel.Children.OfType<TextBlock>())
@@ -1792,7 +1792,7 @@ public class MainWindow : Window, IComponentConnector
 				item2.Header = "MISEについて";
 			}
 		}
-		VersionText.Text = "MISE 1.1.20";
+		VersionText.Text = "MISE 1.1.21";
 	}
 
 	private static BitmapSource? LoadMiseIcon()
@@ -4823,7 +4823,7 @@ public class MainWindow : Window, IComponentConnector
 		}
 		try
 		{
-			return new ProjectSnapshot(_projectService.Serialize(_project), dictionary, _pageIndex, _selectedIds.ToArray());
+			return new ProjectSnapshot(_projectService.Serialize(_project), dictionary, _pageIndex, _selectedIds.ToArray(), ActiveElement?.Id);
 		}
 		finally
 		{
@@ -4861,7 +4861,7 @@ public class MainWindow : Window, IComponentConnector
 
 	private void ApplySnapshot(ProjectSnapshot snapshot)
 	{
-		_project = _projectService.Deserialize(snapshot.Json);
+		_project = _projectService.DeserializeSnapshot(snapshot.Json);
 		foreach (CanvasElementModel item in _project.Pages.SelectMany((PageModel page) => page.Elements))
 		{
 			if (snapshot.Images.TryGetValue(item.Id, out ImageSnapshot value))
@@ -4882,6 +4882,8 @@ public class MainWindow : Window, IComponentConnector
 				_selectedIds.Add(selectedId);
 			}
 		}
+		_activeElementId = snapshot.ActiveElementId.HasValue && _selectedIds.Contains(snapshot.ActiveElementId.Value)
+			? snapshot.ActiveElementId : null;
 		_dirty = true;
 		RefreshAll();
 	}
@@ -7377,6 +7379,10 @@ public class MainWindow : Window, IComponentConnector
 				string hash = Convert.ToHexString(SHA256.HashData(array));
 				if (!_project.EmbeddedFonts.Any((EmbeddedFontModel x) => x.Sha256 == hash))
 				{
+					if (list.Count == 0)
+					{
+						PushUndo();
+					}
 					_project.EmbeddedFonts.Add(new EmbeddedFontModel
 					{
 						FamilyName = text2,
@@ -7394,11 +7400,10 @@ public class MainWindow : Window, IComponentConnector
 		}
 		if (list.Count != 0)
 		{
-			PushUndo();
 			ActivateEmbeddedFonts();
 			MarkDirty();
 			CanvasElementModel activeElement = ActiveElement;
-			if (activeElement != null && activeElement.Kind == ElementKind.Text)
+			if (activeElement != null && activeElement.Kind == ElementKind.Text && !activeElement.IsLocked)
 			{
 				activeElement.FontFamily = list[0];
 				FitTextFrame(activeElement);
@@ -9267,7 +9272,7 @@ public class MainWindow : Window, IComponentConnector
 
 	private void About_Click(object sender, RoutedEventArgs e)
 	{
-		MessageBox.Show("MISE（マイズ） 1.1.20\n\nWindows向け販促物作成ソフト\n\n© 2026 MISE", "MISEについて", MessageBoxButton.OK, MessageBoxImage.Asterisk);
+		MessageBox.Show("MISE（マイズ） 1.1.21\n\nWindows向け販促物作成ソフト\n\n© 2026 MISE", "MISEについて", MessageBoxButton.OK, MessageBoxImage.Asterisk);
 	}
 
 	private void ZoomSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)

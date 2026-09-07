@@ -26,8 +26,15 @@ public sealed class ProjectService
 
 	public ProjectModel Deserialize(string json)
 	{
-		ProjectModel project = JsonSerializer.Deserialize<ProjectModel>(json, JsonOptions) ?? throw new InvalidDataException("プロジェクトデータを読み取れませんでした。");
+		ProjectModel project = DeserializeSnapshot(json);
 		return Normalize(project);
+	}
+
+	// History is trusted in-process state. File migrations must never alter an undo target.
+	public ProjectModel DeserializeSnapshot(string json)
+	{
+		return JsonSerializer.Deserialize<ProjectModel>(json, JsonOptions)
+			?? throw new InvalidDataException("プロジェクトデータを読み取れませんでした。");
 	}
 
 	public void Save(ProjectModel project, string path, bool createHistory = true)
