@@ -54,6 +54,14 @@ Equal(0.1, linkedMinimum.Height, "linked minimum height");
 
 Equal(3.0 / 34.0, DimensionMath.ClampTextScale(34.0, 0.01), "text scale minimum");
 Equal(300.0 / 34.0, DimensionMath.ClampTextScale(34.0, 20.0), "text scale maximum");
+foreach (double font in new[] { 3.0, 34.0, 100.0, 300.0 })
+foreach (string direction in new[] { "N", "S", "E", "W", "NE", "NW", "SE", "SW" })
+{
+	double scale = DimensionMath.ClampTextScale(font, 0.001);
+	ResizeBounds tiny = ResizeMath.ApplyUniformScale(start, direction, scale);
+	Equal(3.0, font * DimensionMath.ClampTextScale(font, tiny.Width / start.Width), "frame and font share 3pt lower bound");
+	Equal(start.Width / start.Height, tiny.Width / tiny.Height, "3pt frame aspect");
+}
 Equal(1.0, DimensionMath.GeneralMinimumMm, "general minimum size policy");
 Equal(5.0, DimensionMath.QrMinimumMm, "QR minimum size policy");
 

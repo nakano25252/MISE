@@ -418,17 +418,9 @@ public sealed class DesignerItem : ContentControl
 		{
 			return;
 		}
-		double scaleX = Math.Max(0.05, rect.Width / _resizeStartRect.Width);
-		double scaleY = Math.Max(0.05, rect.Height / _resizeStartRect.Height);
-		double scale;
-		if ((_resizeDirection.Contains('E') || _resizeDirection.Contains('W')) && (_resizeDirection.Contains('N') || _resizeDirection.Contains('S')))
-		{
-			scale = Math.Sqrt(scaleX * scaleY);
-		}
-		else
-		{
-			scale = (_resizeDirection.Contains('E') || _resizeDirection.Contains('W')) ? scaleX : scaleY;
-		}
+		// ResizeDragDelta already constrains the frame uniformly; use that same scale
+		// for glyphs and effects, including reductions below five percent.
+		double scale = DimensionMath.ClampTextScale(_resizeStartFontSizePt, rect.Width / _resizeStartRect.Width);
 		Model.FontSizePt = Math.Clamp(_resizeStartFontSizePt * scale, 3.0, 300.0);
 		Model.CharacterSpacing = Math.Clamp(_resizeStartCharacterSpacing * scale, -100.0, 300.0);
 		Model.LineSpacingPt = Math.Clamp(_resizeStartLineSpacingPt * scale, -100.0, 300.0);
