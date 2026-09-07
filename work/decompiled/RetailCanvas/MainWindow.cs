@@ -4812,7 +4812,7 @@ public class MainWindow : Window, IComponentConnector
 	{
 		Dictionary<Guid, ImageSnapshot> dictionary = new Dictionary<Guid, ImageSnapshot>();
 		List<CanvasElementModel> list = (from element in _project.Pages.SelectMany((PageModel page) => page.Elements)
-			where element.Kind == ElementKind.Image && (!string.IsNullOrWhiteSpace(element.ImageDataBase64) || !string.IsNullOrWhiteSpace(element.ImageOriginalDataBase64))
+			where element.Kind == ElementKind.Image && (!string.IsNullOrWhiteSpace(element.ImageDataBase64) || !string.IsNullOrWhiteSpace(element.ImageOriginalDataBase64) || !string.IsNullOrWhiteSpace(element.ImagePreTrimDataBase64))
 			select element).ToList();
 		foreach (CanvasElementModel item in list)
 		{

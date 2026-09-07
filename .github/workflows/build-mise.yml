@@ -32,6 +32,9 @@ jobs:
       - name: Run state and four-page regression tests
         run: dotnet run --project work/state-tests/StateTests.csproj --configuration Release
 
+      - name: Run four-page PDF and AI import tests
+        run: dotnet run --project work/import-tests/ImportTests.csproj --configuration Release
+
       - name: Build with warnings treated as errors
         run: dotnet build work/decompiled/RetailCanvas.csproj --configuration Release --no-restore -p:TreatWarningsAsErrors=true
 
