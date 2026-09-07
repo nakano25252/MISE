@@ -5,7 +5,7 @@ namespace RetailCanvas.Models;
 
 public sealed class ProjectModel
 {
-	public int FileFormatVersion { get; set; } = 1;
+	public int FileFormatVersion { get; set; } = 2;
 
 	public Guid ProjectId { get; set; } = Guid.NewGuid();
 

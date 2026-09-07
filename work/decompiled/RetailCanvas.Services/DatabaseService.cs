@@ -435,7 +435,6 @@ public sealed class DatabaseService
 		{
 			csvAlias.Deconstruct(out var key, out var value);
 			string key2 = key;
-			value = value;
 			foreach (string alias in value)
 			{
 				int num = Enumerable.Range(0, headers.Count).FirstOrDefault((int index) => string.Equals(headers[index]?.Trim(), alias, StringComparison.OrdinalIgnoreCase), -1);
