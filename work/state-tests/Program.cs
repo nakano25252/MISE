@@ -41,6 +41,21 @@ bool rejected = false;
 try { service.Deserialize(service.Serialize(project)); }
 catch (System.IO.InvalidDataException) { rejected = true; }
 Require(rejected, "Future file formats are still rejected");
+foreach (bool initial in new[] { false, true })
+foreach (bool reverse in new[] { false, true })
+{
+    var active = new CanvasElementModel { IsLocked = initial };
+    var other = new CanvasElementModel { IsLocked = initial };
+    var outsideSelection = new CanvasElementModel { IsLocked = initial };
+    var selection = reverse ? new[] { other, active } : new[] { active, other };
+    bool target = !active.IsLocked;
+    ElementLockService.Apply(ElementLockService.GetChanges(selection, target), target);
+    Require(selection.All(x => x.IsLocked == target), "Lock target is independent of active element order");
+    Require(outsideSelection.IsLocked == initial, "Unselected elements retain lock state");
+    Require(ElementLockService.GetChanges(selection, target).Count == 0, "Repeated lock does not create an edit");
+    other.IsLocked = initial;
+    Require(ElementLockService.GetChanges(selection, target).Count == 1, "Mixed selection changes only differing locks");
+}
 Console.WriteLine("PASS: history serialization, file migration, four-page preservation, 3pt and image data");
 
 static void Require(bool condition, string message)

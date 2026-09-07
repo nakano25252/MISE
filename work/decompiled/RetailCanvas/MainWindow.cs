@@ -2953,17 +2953,21 @@ public class MainWindow : Window, IComponentConnector
 					string selectedCap = text;
 					menuItem5.Items.Add(MenuItemOf(text, delegate
 					{
+						if (RejectLockedMutation(model, "線の始点を変更") || model.LineStartCap == selectedCap) return;
 						PushUndo();
 						model.LineStartCap = selectedCap;
 						MarkDirty();
 						RebuildCanvas();
+						UpdatePropertyPanel();
 					}));
 					menuItem6.Items.Add(MenuItemOf(text, delegate
 					{
+						if (RejectLockedMutation(model, "線の終点を変更") || model.LineEndCap == selectedCap) return;
 						PushUndo();
 						model.LineEndCap = selectedCap;
 						MarkDirty();
 						RebuildCanvas();
+						UpdatePropertyPanel();
 					}));
 				}
 				menuItem4.Items.Add(new Separator());
@@ -2988,10 +2992,12 @@ public class MainWindow : Window, IComponentConnector
 					double selectedSize = item2;
 					menuItem7.Items.Add(MenuItemOf(item, delegate
 					{
+						if (RejectLockedMutation(model, "矢印サイズを変更") || model.ArrowSize == selectedSize) return;
 						PushUndo();
 						model.ArrowSize = selectedSize;
 						MarkDirty();
 						RebuildCanvas();
+						UpdatePropertyPanel();
 					}));
 				}
 				menuItem4.Items.Add(menuItem7);
@@ -3021,14 +3027,7 @@ public class MainWindow : Window, IComponentConnector
 		contextMenu.Items.Add(new Separator());
 		contextMenu.Items.Add(MenuItemOf(model.IsLocked ? "ロック解除" : "ロック", delegate
 		{
-			PushUndo();
-			foreach (CanvasElementModel item5 in CurrentPage.Elements.Where((CanvasElementModel x) => _selectedIds.Contains(x.Id)))
-			{
-				item5.IsLocked = !model.IsLocked;
-			}
-			MarkDirty();
-			RebuildCanvas();
-			UpdatePropertyPanel();
+			SetSelectionLocked(!model.IsLocked);
 		}));
 		contextMenu.Items.Add(MenuItemOf("削除", Delete_Click, "Delete"));
 		return contextMenu;
@@ -3046,6 +3045,8 @@ public class MainWindow : Window, IComponentConnector
 		{
 			return MenuItemOf(header, delegate
 			{
+				if (RejectLockedMutation(model, "線の種類を変更")) return;
+				if (model.LineStyle == style && model.LineStartCap == start && model.LineEndCap == end) return;
 				PushUndo();
 				model.LineStyle = style;
 				model.LineStartCap = start;
@@ -4137,14 +4138,18 @@ public class MainWindow : Window, IComponentConnector
 		{
 			return;
 		}
+		SetSelectionLocked(!activeElement.IsLocked);
+	}
+
+	private void SetSelectionLocked(bool locked)
+	{
+		var changes = ElementLockService.GetChanges(CurrentPage.Elements.Where(x => _selectedIds.Contains(x.Id)), locked);
+		if (changes.Count == 0) return;
 		PushUndo();
-		bool isLocked = !activeElement.IsLocked;
-		foreach (CanvasElementModel item in CurrentPage.Elements.Where((CanvasElementModel x) => _selectedIds.Contains(x.Id)))
-		{
-			item.IsLocked = isLocked;
-		}
+		ElementLockService.Apply(changes, locked);
 		MarkDirty();
 		RebuildCanvas();
+		RefreshLayers();
 		UpdatePropertyPanel();
 	}
 
@@ -7010,6 +7015,11 @@ public class MainWindow : Window, IComponentConnector
 				return;
 			}
 			bool requested = checkBox.IsChecked == true;
+			if (property == "Lock")
+			{
+				SetSelectionLocked(requested);
+				return;
+			}
 			bool current = property switch
 			{
 				"Aspect" => IsProportionalOnly(activeElement) || activeElement.PreserveAspectRatio,
